@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PR Metrics · Monokera</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="theme-dark">
+  <div id="app">
+    <header class="header">
+      <div class="header-inner">
+        <div class="header-top">
+          <div>
+            <h1>Engineering metrics</h1>
+            <p class="subtitle">{{ orgName || 'GitHub organization' }}{{ lastActivityText ? ' · ' + lastActivityText : '' }}</p>
+          </div>
+          <div class="org-config">
+            <input type="text" v-model="orgName" placeholder="Org (e.g. monokera-tech)" class="input-org">
+            <input type="password" v-model="githubToken" placeholder="Token (required for metrics)" class="input-token" autocomplete="off">
+            <button type="button" @click="loadMetrics" :disabled="loadingMetrics" class="btn btn-primary" title="Loads projects and metrics from GitHub">
+              {{ loadingMetrics ? 'Loading…' : 'Load metrics' }}
+            </button>
+          </div>
+        </div>
+        <p v-if="reposError" class="error-msg">{{ reposError }}</p>
+        <p v-if="realMetrics.error" class="error-msg">{{ realMetrics.error }}</p>
+        <template v-if="realMetrics.loaded && repoErrorsSummary">
+          <p class="token-hint repo-errors-msg">
+            Could not load metrics for {{ repoErrorsSummary.count }} repo(s). GitHub: «{{ repoErrorsSummary.message }}». Repos: {{ repoErrorsSummary.listText }}.
+          </p>
+          <p class="token-hint repo-errors-hint">Use a token with <strong>repo</strong> scope (and authorize SSO for your org if required). If the org or repo names are wrong, fix the org field and reload the repo list.</p>
+        </template>
+        <p v-if="realMetrics.loaded" class="real-metrics-badge">Real metrics loaded from GitHub</p>
+        <p v-if="!realMetrics.loaded && !realMetrics.loading" class="token-hint demo-hint">No data yet. Enter org and token, then click Load metrics to load your data from GitHub.</p>
+        <p v-if="tokenHint" class="token-hint">{{ tokenHint }}</p>
+      </div>
+    </header>
+
+    <nav class="nav" role="navigation" aria-label="Dashboard sections">
+      <ul class="nav-list">
+        <li><button type="button" :class="['nav-item', { active: module === 'resumen' }]" @click="module = 'resumen'">
+          <span class="nav-icon" aria-hidden="true">◉</span> Summary
+        </button></li>
+        <li><button type="button" :class="['nav-item', { active: module === 'tendencias' }]" @click="module = 'tendencias'">
+          <span class="nav-icon" aria-hidden="true">▤</span> Trends
+        </button></li>
+        <li><button type="button" :class="['nav-item', { active: module === 'proyectos' }]" @click="module = 'proyectos'">
+          <span class="nav-icon" aria-hidden="true">▦</span> Projects
+        </button></li>
+        <li><button type="button" :class="['nav-item', { active: module === 'metricas' }]" @click="module = 'metricas'">
+          <span class="nav-icon" aria-hidden="true">▣</span> Detailed metrics
+        </button></li>
+        <li><button type="button" :class="['nav-item', { active: module === 'calidad' }]" @click="module = 'calidad'">
+          <span class="nav-icon" aria-hidden="true">◇</span> Quality
+        </button></li>
+        <li><button type="button" :class="['nav-item', { active: module === 'referencias' }]" @click="module = 'referencias'">
+          <span class="nav-icon" aria-hidden="true">?</span> References
+        </button></li>
+      </ul>
+    </nav>
+
+    <main class="main">
+      <!-- Summary -->
+      <section v-show="module === 'resumen'" class="module resumen">
+        <h2 class="module-title">Organization health</h2>
+        <div class="legend-levels">
+          <p class="legend-title">How to read levels and colors</p>
+          <ul class="legend-list">
+            <li><span class="legend-dot elite"></span> <strong>Elite (green)</strong>: You meet top-team benchmarks (2025). Target to aim for.</li>
+            <li><span class="legend-dot high"></span> <strong>High (amber)</strong>: Good, acceptable level; metrics in the “high” range with room to improve toward elite.</li>
+            <li><span class="legend-dot low"></span> <strong>Needs improvement (red)</strong>: Metrics below target; prioritize TTFR, PR size, and review process.</li>
+          </ul>
+        </div>
+        <div class="health-row">
+          <div class="health-card" :data-health="healthStatus || 'none'">
+            <div class="health-label">PR flow health</div>
+            <div class="health-value">{{ healthLabel }}</div>
+            <p class="health-hint">The card’s left border color shows your current level.</p>
+            <div class="health-dots">
+              <span class="dot" :class="{ on: healthStatus === 'elite' }" title="Elite"></span>
+              <span class="dot" :class="{ on: healthStatus === 'elite' || healthStatus === 'high' }" title="High"></span>
+              <span class="dot on" title="Needs improvement"></span>
+            </div>
+          </div>
+          <div class="kpi-cards">
+            <div v-for="k in summaryKpis" :key="k.id" class="kpi-card" :data-level="k.level || 'none'">
+              <span class="kpi-name">{{ k.name }}</span>
+              <span class="kpi-value">{{ k.value }}</span>
+              <span class="kpi-benchmark">Elite target: {{ k.elite }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="resumen-actions">
+          <p class="resumen-text">{{ resumenRecomendacion }}</p>
+        </div>
+      </section>
+
+      <!-- Trends -->
+      <section v-show="module === 'tendencias'" class="module tendencias">
+        <h2 class="module-title">Evolution over time</h2>
+        <p class="chart-legend">Cycle Time, Lead Time, and Time to First Review (last 12 weeks). Goal: stable or downward trend. <strong>Gaps in the line</strong> = weeks with no merged PRs in the selected scope.</p>
+        <div class="chart-wrap">
+          <canvas id="chartTrend" ref="chartTrend"></canvas>
+        </div>
+        <p class="chart-caption"><span v-if="realMetrics.loaded && !trendHasData" class="no-data-msg">No merged PRs in the last 12 weeks. Flat line at 0 = no data.</span><span v-else>Cycle Time (h), Lead Time (h), TTFR (h). Load metrics to see data.</span>
+        </p>
+        <p class="chart-legend">Merged PRs per week = team throughput. Empty bars = no merges in that week.</p>
+        <div class="chart-wrap">
+          <canvas id="chartThroughput" ref="chartThroughput"></canvas>
+        </div>
+        <p class="chart-caption">Volume of merged PRs per week. Load real metrics to see actual throughput.</p>
+      </section>
+
+      <!-- Projects -->
+      <section v-show="module === 'proyectos'" class="module proyectos">
+        <div class="proyectos-header">
+          <h2 class="module-title">Projects</h2>
+          <template v-if="repos.length">
+            <p class="proyectos-desc"><strong>Comparative (all)</strong>: all projects in one chart. <strong>Single project</strong>: one repo with full metrics and charts. Select a project from the dropdown to switch.</p>
+            <div class="proyectos-toolbar">
+              <select id="project-select" v-model="selectedRepo" class="select-project">
+                <option value="">— Select project —</option>
+                <option v-for="r in repos" :key="r.full_name" :value="r.name">{{ r.name }}</option>
+              </select>
+              <div class="proyectos-buttons" role="tablist" aria-label="Project view">
+                <button type="button" role="tab" :class="['btn', 'btn-sec', vistaProyecto === 'comparativa' ? 'active' : '']" @click="vistaProyecto = 'comparativa'">Comparative (all)</button>
+                <button type="button" role="tab" :class="['btn', 'btn-sec', vistaProyecto === 'individual' ? 'active' : '']" :disabled="!selectedRepo" @click="vistaProyecto = 'individual'">Single project</button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <template v-if="repos.length">
+          <template v-if="vistaProyecto === 'comparativa'">
+            <p class="chart-legend">Median Lead Time (hours) per repository. <strong>Longer bar = more time until merge.</strong> Bar colors alternate by repo for readability.</p>
+            <div class="chart-wrap chart-repos">
+              <canvas id="chartByRepo" ref="chartByRepo"></canvas>
+            </div>
+            <p class="chart-caption">Lead Time (h) by repo. First 100 repos loaded; last 100 merged PRs per repo. Repos with no merged PRs or load errors show 0.</p>
+            <p v-if="repos.length > 20" class="chart-caption">Showing the first 20 projects. Use the dropdown and “Single project” to view any repo.</p>
+            <template v-if="selectedRepo">
+              <h3 class="metric-cards-title">Key metrics for {{ selectedRepo }}</h3>
+              <p class="metric-cards-hint">Cycle Time, Lead Time, TTFR, Review Cycles, and Change Failure Rate for the selected repository.</p>
+              <div class="metrics-grid compact">
+                <article v-for="m in projectMetrics(selectedRepo)" :key="m.id" class="metric-card" :data-level="m.level || 'none'">
+                  <h4>{{ m.name }}</h4>
+                  <div class="value-row"><span class="value">{{ m.value }}</span></div>
+                </article>
+              </div>
+              <p class="explore-hint"><button type="button" class="btn btn-link" @click="vistaProyecto = 'individual'">View full analysis for this project →</button></p>
+            </template>
+          </template>
+
+          <p v-else-if="vistaProyecto === 'individual' && !selectedRepo" class="empty-state">Select a project from the dropdown to see its individual analysis.</p>
+          <template v-else-if="vistaProyecto === 'individual' && selectedRepo">
+            <div class="individual-breadcrumb">{{ selectedRepo }}</div>
+            <div class="project-status-card" :data-status="!realMetrics.loaded ? 'none' : (projectDataStatus(selectedRepo).hasError ? 'error' : (projectDataStatus(selectedRepo).hasData ? 'ok' : 'no-data'))">
+              <template v-if="!realMetrics.loaded">
+                <p class="status-msg">Load metrics to see last activity and last commit.</p>
+              </template>
+              <template v-else-if="projectDataStatus(selectedRepo).hasError">
+                <p class="status-msg error">Could not load metrics: {{ projectDataStatus(selectedRepo).errorMessage }}. Check token scope or repo access.</p>
+              </template>
+              <template v-else-if="!projectDataStatus(selectedRepo).hasData">
+                <p class="status-msg no-data">No merged PRs in the last 50 for this repo. Metrics show —.</p>
+              </template>
+              <template v-else>
+                <p v-if="projectLastActivityText(selectedRepo)" class="status-msg">Last activity (last merged PR): <strong>{{ projectLastActivityText(selectedRepo) }}</strong></p>
+                <p v-if="repoLastCommits[selectedRepo]" class="status-msg">Last commit: <strong>{{ formatDateShort(repoLastCommits[selectedRepo].date) }}</strong> ({{ relativeTimeAgo(repoLastCommits[selectedRepo].date) }})</p>
+              </template>
+            </div>
+            <div class="metrics-grid aggregate">
+              <article v-for="m in projectMetrics(selectedRepo)" :key="m.id" class="metric-card" :data-level="m.level || 'none'">
+                <h3>{{ m.name }}</h3>
+                <p class="definition">{{ m.definition }}</p>
+                <div class="value-row">
+                  <span class="value">{{ m.value }}</span>
+                  <span class="benchmark">Elite: {{ m.elite }} · High: {{ m.high }}</span>
+                </div>
+                <div class="impact">{{ m.impact }}</div>
+              </article>
+            </div>
+            <div v-if="realMetrics.loaded && projectDataStatus(selectedRepo).hasData" class="individual-charts" :key="selectedRepo">
+              <div class="chart-wrap"><canvas id="chartIndividualTrend" ref="chartIndividualTrend"></canvas></div>
+              <div class="chart-wrap chart-half"><canvas id="chartCycleBreakdown" ref="chartCycleBreakdown"></canvas></div>
+              <div class="chart-wrap chart-half"><canvas id="chartCycleDist" ref="chartCycleDist"></canvas></div>
+              <div class="chart-wrap chart-half"><canvas id="chartIndividualThroughput" ref="chartIndividualThroughput"></canvas></div>
+              <div class="chart-wrap chart-half"><canvas id="chartRadar" ref="chartRadar"></canvas></div>
+            </div>
+            <div v-else-if="realMetrics.loaded && !projectDataStatus(selectedRepo).hasError" class="individual-charts-no-data">
+              <p class="no-data-charts-msg">No data to plot. This project has no merged PRs in the last 50, so trend, cycle breakdown, throughput, and radar charts are not shown.</p>
+            </div>
+            <p v-if="realMetrics.loaded && projectDataStatus(selectedRepo).hasData" class="chart-caption">Left: time in queue (pickup), in review, and post-approval. Right: % of PRs by cycle time range. Radar: this project vs elite targets.</p>
+            <h3 v-if="realMetrics.loaded && projectDataStatus(selectedRepo).hasData" class="section-subtitle">PR size distribution (this project)</h3>
+            <div v-if="realMetrics.loaded && projectDataStatus(selectedRepo).hasData" class="pr-size-bars">
+              <div class="bars-inner">
+                <div v-for="(p, i) in projectPrSizes(selectedRepo)" :key="i" class="bar-row">
+                  <span class="label">{{ p.label }}</span>
+                  <div class="bar-wrap"><div class="bar" :class="p.class" :style="{ width: p.percent + '%' }"></div></div>
+                  <span class="pct">{{ p.percent }}%</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="realMetrics.loaded && projectDataStatus(selectedRepo).hasData" class="wip-card" :data-status="wipStatus(selectedRepo)">
+              <h4>Work in progress (open PRs)</h4>
+              <div class="wip-value">{{ getOpenPrs(selectedRepo) }} <span class="wip-limit">/ recommended limit: 10</span></div>
+              <p class="wip-hint">{{ wipRecomendacion(selectedRepo) }}</p>
+            </div>
+            <div class="recommendations-card">
+              <h3>Actionable recommendations</h3>
+              <template v-if="realMetrics.loaded && !projectDataStatus(selectedRepo).hasData && !projectDataStatus(selectedRepo).hasError">
+                <ul class="recommendations-list">
+                  <li class="rec-item" data-priority="high">
+                    <span class="rec-text">No merged PRs in the last 50 for this repo.</span>
+                    <span class="rec-action">Merge or update PRs to see trends and charts here.</span>
+                  </li>
+                </ul>
+              </template>
+              <ul v-else class="recommendations-list">
+                <li v-for="(rec, i) in recomendacionesProyecto(selectedRepo)" :key="i" class="rec-item" :data-priority="rec.priority">
+                  <span class="rec-text">{{ rec.text }}</span>
+                  <span class="rec-action">{{ rec.action }}</span>
+                </li>
+              </ul>
+            </div>
+          </template>
+        </template>
+        <p v-else class="empty-state">Click “Load metrics” to see the comparative view and single-project analysis.</p>
+      </section>
+
+      <!-- Detailed metrics -->
+      <section v-show="module === 'metricas'" class="module metricas">
+        <h2 class="module-title">Aggregate metrics</h2>
+        <p class="chart-legend">Organization-wide medians. Load real metrics to see values from GitHub.</p>
+        <div class="metrics-grid aggregate">
+          <article v-for="m in aggregateMetrics" :key="m.id" class="metric-card" :data-level="m.level || 'none'">
+            <h3>{{ m.name }}</h3>
+            <p class="definition">{{ m.definition }}</p>
+            <div class="value-row">
+              <span class="value">{{ m.value }}</span>
+              <span class="benchmark">Elite: {{ m.elite }} · High: {{ m.high }}</span>
+            </div>
+            <div class="impact">{{ m.impact }}</div>
+          </article>
+        </div>
+        <h3 class="section-subtitle">PR size distribution (LOC)</h3>
+        <div class="pr-size-legend">
+          <span class="badge xs">XS 0-9</span>
+          <span class="badge s">S 10-29</span>
+          <span class="badge m">M 30-99</span>
+          <span class="badge l">L 100-499</span>
+          <span class="badge xl">XL+ 500+</span>
+        </div>
+        <div class="pr-size-bars">
+          <div class="bars-inner">
+            <div v-for="(p, i) in aggregatePrSizes" :key="i" class="bar-row">
+              <span class="label">{{ p.label }}</span>
+              <div class="bar-wrap"><div class="bar" :class="p.class" :style="{ width: p.percent + '%' }"></div></div>
+              <span class="pct">{{ p.percent }}%</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Quality -->
+      <section v-show="module === 'calidad'" class="module calidad">
+        <h2 class="module-title">Quality and stability</h2>
+        <div class="calidad-grid">
+          <div class="chart-wrap cfr-no-data-panel">
+            <h3 class="cfr-panel-title">Change Failure Rate (%)</h3>
+            <p class="cfr-panel-text">This metric is <strong>not available from GitHub</strong>. CFR = % of deploys that cause incidents.</p>
+            <p class="cfr-panel-text">To show data here you would need to integrate with deployment and incident tracking (e.g. CI/CD, PagerDuty, or similar). Elite: 0–15%, High: 15–20%.</p>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chartReviewCycles" ref="chartReviewCycles"></canvas>
+          </div>
+        </div>
+        <p class="chart-caption no-data-msg">Review cycles: median from loaded PRs (flat line = same value over weeks).</p>
+        <h3 class="section-subtitle">Cycle time breakdown (where time goes)</h3>
+        <div class="calidad-grid">
+          <div class="chart-wrap chart-half">
+            <canvas id="chartCycleBreakdownOrg" ref="chartCycleBreakdownOrg"></canvas>
+          </div>
+          <div class="chart-wrap chart-half">
+            <canvas id="chartCycleDistOrg" ref="chartCycleDistOrg"></canvas>
+          </div>
+        </div>
+        <p class="chart-caption">Left: derived from cycle time distribution when data is loaded. Right: % of PRs by lead time range (0–12h, 12–24h, 24–48h, 48h+). Goal: most in 0–24h.</p>
+        <div class="recommendations-card org">
+          <h3>Actionable recommendations (organization)</h3>
+          <ul class="recommendations-list">
+            <li v-for="(rec, i) in recomendacionesOrg" :key="i" class="rec-item" :data-priority="rec.priority">
+              <span class="rec-text">{{ rec.text }}</span>
+              <span class="rec-action">{{ rec.action }}</span>
+            </li>
+          </ul>
+        </div>
+        <div class="info-card calidad-tips">
+          <h3>Key indicators</h3>
+          <ul>
+            <li><strong>High TTFR</strong> → Risk of lost flow state and productivity (20–40%).</li>
+            <li><strong>Many XL+ PRs</strong> → Slower reviews and higher risk of missed issues.</li>
+            <li><strong>Review cycles &gt; 1.5</strong> → Possible unclear requirements or feedback.</li>
+            <li><strong>Change Failure Rate &gt; 20%</strong> → Review tests, deploys, and change size.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- References -->
+      <section v-show="module === 'referencias'" class="module referencias info-section">
+        <h2 class="module-title">References and data sources</h2>
+        <div class="info-grid">
+          <div class="info-card">
+            <h3>Metric formulas</h3>
+            <ul>
+              <li><strong>Lead Time</strong> = first_reviewed_at − created_at</li>
+              <li><strong>Cycle Time</strong> = merged_at − created_at</li>
+            </ul>
+          </div>
+          <div class="info-card">
+            <h3>Data extraction</h3>
+            <ul>
+              <li><strong>GraphQL API (v4)</strong>: nested queries, single request.</li>
+              <li><strong>GitHub CLI (gh)</strong>: <code>gh pr view --json title,createdAt,mergedAt</code>.</li>
+              <li><strong>GitHub Actions</strong>: pull-request-analytics, cron, reports in Issues.</li>
+              <li><strong>DORA / Four Keys</strong>: webhooks, BigQuery, Grafana.</li>
+            </ul>
+          </div>
+          <div class="info-card full">
+            <h3>Benchmarks</h3>
+            <table class="benchmarks-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Elite</th>
+                  <th>High</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="m in metricDefs" :key="m.id">
+                  <td>{{ m.name }}</td>
+                  <td>{{ m.elite }}</td>
+                  <td>{{ m.high }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="benchmarks-note">Ideal PR size: &lt; 200 LOC; elite teams ~50 LOC median.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>PR metrics · {{ orgName || '—' }}{{ lastActivityText ? ' · ' + lastActivityText : '' }}</p>
+    </footer>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
