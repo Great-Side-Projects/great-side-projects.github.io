@@ -90,6 +90,26 @@ body {
   color: var(--text-muted);
 }
 
+.date-range-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.date-range-text {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.input-date {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
 .btn {
   padding: 0.5rem 1rem;
   border: none;
@@ -406,8 +426,14 @@ body {
   padding: 1rem;
 }
 
-.chart-repos {
-  height: 420px;
+.chart-repos-scroll {
+  max-height: 75vh;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+
+.chart-repos-scroll .chart-repos {
+  height: auto;
   min-height: 320px;
 }
 

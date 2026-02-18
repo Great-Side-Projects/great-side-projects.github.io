@@ -44,30 +44,102 @@ function mockNumericValue(metricId, level, weekIndex) {
   }
 }
 
-// Week start (Monday) for a given date string YYYY-MM-DD
-function getWeekStart(isoDateStr) {
-  const d = new Date(isoDateStr + 'T12:00:00Z');
-  const day = d.getUTCDay();
-  const toMonday = (day + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - toMonday);
-  return d.toISOString().slice(0, 10);
+// Metrics utils: use window.MetricsUtils if loaded (metrics-utils.js), else inline
+var getWeekStart, last12Weeks, getWeeksInRange, median, sizeBucket, levelFromMetrics, metricLevelForValue, formatHours, formatReviewCycles;
+if (typeof window !== 'undefined' && window.MetricsUtils) {
+  var _u = window.MetricsUtils;
+  getWeekStart = _u.getWeekStart;
+  last12Weeks = _u.last12Weeks;
+  getWeeksInRange = _u.getWeeksInRange;
+  median = _u.median;
+  sizeBucket = _u.sizeBucket;
+  levelFromMetrics = _u.levelFromMetrics;
+  metricLevelForValue = _u.metricLevelForValue;
+  formatHours = _u.formatHours;
+  formatReviewCycles = _u.formatReviewCycles;
+  getWeeksInRange = _u.getWeeksInRange;
+} else {
+  getWeeksInRange = function(fromDateStr, toDateStr) {
+    let m = new Date(getWeekStart(fromDateStr) + 'T12:00:00Z');
+    const end = new Date(getWeekStart(toDateStr) + 'T12:00:00Z');
+    const weeks = [];
+    while (m <= end) {
+      weeks.push(m.toISOString().slice(0, 10));
+      m.setUTCDate(m.getUTCDate() + 7);
+    }
+    return weeks;
+  };
+  getWeekStart = function(isoDateStr) {
+    const d = new Date(isoDateStr + 'T12:00:00Z');
+    const day = d.getUTCDay();
+    const toMonday = (day + 6) % 7;
+    d.setUTCDate(d.getUTCDate() - toMonday);
+    return d.toISOString().slice(0, 10);
+  };
+  last12Weeks = function() {
+    const weeks = [];
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const thisMonday = getWeekStart(today);
+    const m = new Date(thisMonday + 'T12:00:00Z');
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(m);
+      d.setUTCDate(d.getUTCDate() - 7 * i);
+      weeks.push(d.toISOString().slice(0, 10));
+    }
+    return weeks;
+  };
+  median = function(arr) {
+    if (!arr || arr.length === 0) return 0;
+    const a = arr.filter((x) => x != null && !Number.isNaN(x)).sort((x, y) => x - y);
+    if (a.length === 0) return 0;
+    const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  };
+  sizeBucket = function(lines) {
+    if (lines <= 9) return 0;
+    if (lines <= 29) return 1;
+    if (lines <= 99) return 2;
+    if (lines <= 499) return 3;
+    return 4;
+  };
+  levelFromMetrics = function(leadTimeH, ttfrH, reviewCycles) {
+    const leadOk = leadTimeH < 12;
+    const leadHigh = leadTimeH < 24;
+    const ttfrOk = ttfrH < 1;
+    const ttfrHigh = ttfrH < 4;
+    const cycleOk = reviewCycles != null && reviewCycles <= 1.2;
+    if (leadOk && ttfrOk && cycleOk) return 'elite';
+    if (leadHigh && ttfrHigh) return 'high';
+    return 'low';
+  };
+  metricLevelForValue = function(metricId, value) {
+    if (value == null || Number.isNaN(value)) return null;
+    switch (metricId) {
+      case 'cycleTime': if (value < 8) return 'elite'; if (value < 24) return 'high'; return 'low';
+      case 'leadTime': if (value < 12) return 'elite'; if (value < 24) return 'high'; return 'low';
+      case 'ttfr': if (value < 1) return 'elite'; if (value < 4) return 'high'; return 'low';
+      case 'reviewCycles': if (value <= 1.1) return 'elite'; if (value <= 1.2) return 'high'; return 'low';
+      case 'changeFailureRate': return null;
+      default: return null;
+    }
+  };
+  formatHours = function(h) {
+    if (h == null || Number.isNaN(h)) return '—';
+    if (h < 1) return Math.round(h * 60) + ' min';
+    if (h < 24) return (Math.round(h * 10) / 10) + ' h';
+    return (Math.round((h / 24) * 10) / 10) + ' d';
+  };
+  formatReviewCycles = function(n) {
+    if (n == null || Number.isNaN(n)) return '—';
+    return (Math.round(n * 10) / 10).toString();
+  };
+}
+function formatCycleTime(h) {
+  return formatHours(h);
 }
 
-// Last 12 weeks: 12 Monday dates
-function last12Weeks() {
-  const weeks = [];
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const thisMonday = getWeekStart(today);
-  const m = new Date(thisMonday + 'T12:00:00Z');
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(m);
-    d.setUTCDate(d.getUTCDate() - 7 * i);
-    weeks.push(d.toISOString().slice(0, 10));
-  }
-  return weeks;
-}
-
+// (last12Weeks, getWeekStart, median, etc. from MetricsUtils or inline above)
 function mockTrendData(level) {
   const weeks = last12Weeks();
   return {
@@ -130,43 +202,7 @@ function mockOpenPrsCount(repoName, seed) {
 // Review cycles = 1 + count(CHANGES_REQUESTED)
 // PR size buckets: XS 0-9, S 10-29, M 30-99, L 100-499, XL+ 500+ (additions+deletions)
 // Cycle time distribution: % of PRs by lead time in 0-12h, 12-24h, 24-48h, 48h+
-function median(arr) {
-  if (!arr || arr.length === 0) return 0;
-  const a = arr.filter((x) => x != null && !Number.isNaN(x)).sort((x, y) => x - y);
-  if (a.length === 0) return 0;
-  const m = Math.floor(a.length / 2);
-  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
-}
-function sizeBucket(lines) {
-  if (lines <= 9) return 0;
-  if (lines <= 29) return 1;
-  if (lines <= 99) return 2;
-  if (lines <= 499) return 3;
-  return 4;
-}
-function levelFromMetrics(leadTimeH, ttfrH, reviewCycles) {
-  const leadOk = leadTimeH < 12;
-  const leadHigh = leadTimeH < 24;
-  const ttfrOk = ttfrH < 1;
-  const ttfrHigh = ttfrH < 4;
-  const cycleOk = reviewCycles != null && reviewCycles <= 1.2;
-  if (leadOk && ttfrOk && cycleOk) return 'elite';
-  if (leadHigh && ttfrHigh) return 'high';
-  return 'low';
-}
-function formatHours(h) {
-  if (h == null || Number.isNaN(h)) return '—';
-  if (h < 1) return Math.round(h * 60) + ' min';
-  if (h < 24) return (Math.round(h * 10) / 10) + ' h';
-  return (Math.round((h / 24) * 10) / 10) + ' d';
-}
-function formatCycleTime(h) {
-  return formatHours(h);
-}
-function formatReviewCycles(n) {
-  if (n == null || Number.isNaN(n)) return '—';
-  return (Math.round(n * 10) / 10).toString();
-}
+// (median, sizeBucket, levelFromMetrics, metricLevelForValue, formatHours, formatReviewCycles from MetricsUtils or inline above)
 
 // Last activity: "Last activity: 2 months ago" (English)
 function formatRelativeTime(isoDateStr) {
@@ -270,6 +306,8 @@ createApp({
       },
       repoLastCommits: {}, // { [repoName]: { date: iso, sha } } from REST API
       metricDefs: METRIC_DEFS,
+      dateFrom: '',
+      dateTo: '',
     };
   },
   computed: {
@@ -292,44 +330,74 @@ createApp({
     },
     summaryKpis() {
       const g = this.realMetrics.loaded && this.realMetrics.global ? this.realMetrics.global : null;
-      const level = this.aggregateLevel;
       return METRIC_DEFS.map((def) => {
         let value;
+        let level = null;
         if (def.id === 'changeFailureRate') {
           value = 'No data (deploy data required)';
         } else if (g) {
-          if (def.id === 'cycleTime' || def.id === 'leadTime') value = formatHours(g.leadTimeMedianH);
-          else if (def.id === 'ttfr') value = formatHours(g.ttfrMedianH);
-          else if (def.id === 'reviewCycles') value = formatReviewCycles(g.reviewCyclesMedian);
-          else value = formatHours(g.leadTimeMedianH);
+          if (def.id === 'cycleTime' || def.id === 'leadTime') {
+            value = formatHours(g.leadTimeMedianH);
+            level = metricLevelForValue(def.id, g.leadTimeMedianH);
+          } else if (def.id === 'ttfr') {
+            value = formatHours(g.ttfrMedianH);
+            level = metricLevelForValue(def.id, g.ttfrMedianH);
+          } else if (def.id === 'reviewCycles') {
+            value = formatReviewCycles(g.reviewCyclesMedian);
+            level = metricLevelForValue(def.id, g.reviewCyclesMedian);
+          } else {
+            value = formatHours(g.leadTimeMedianH);
+            level = metricLevelForValue(def.id, g.leadTimeMedianH);
+          }
         } else {
           value = 'No data';
         }
-        return { ...def, value, level: level || null };
+        return { ...def, value, level };
       });
     },
     resumenRecomendacion() {
-      if (this.aggregateLevel == null) return 'Load metrics to see data and recommendations.';
-      if (this.aggregateLevel === 'elite') return 'PR flow is at elite level. Keep size limits (< 200 LOC), low TTFR, and peer review.';
-      if (this.aggregateLevel === 'high') return 'Recommendation: reduce TTFR with clear review queues and consider smaller PRs to move toward elite.';
-      return 'Priority: reduce Time to First Review and PR size. Review reviewer assignment and CODEOWNERS usage.';
+      const g = this.realMetrics.loaded && this.realMetrics.global ? this.realMetrics.global : null;
+      if (!g || this.aggregateLevel == null) return 'Load metrics to see data and recommendations.';
+      const lead = g.leadTimeMedianH;
+      const ttfr = g.ttfrMedianH;
+      const cycles = g.reviewCyclesMedian;
+      const xlPct = ((this.aggregatePrPcts && this.aggregatePrPcts[4]) || 0) + ((this.aggregatePrPcts && this.aggregatePrPcts[3]) || 0);
+      const issues = [];
+      if (ttfr != null && ttfr >= 4) issues.push('TTFR above 4h (current median ' + formatHours(ttfr) + ')');
+      else if (ttfr != null && ttfr >= 1) issues.push('TTFR could improve toward &lt; 1h (current ' + formatHours(ttfr) + ')');
+      if (lead != null && lead >= 24) issues.push('Lead Time above 24h (' + formatHours(lead) + ')');
+      else if (lead != null && lead >= 12) issues.push('Lead Time could improve toward &lt; 12h (' + formatHours(lead) + ')');
+      if (cycles != null && cycles > 1.2) issues.push('Review cycles above 1.2 (median ' + formatReviewCycles(cycles) + ')');
+      if (xlPct > 25) issues.push('High % of large PRs (L+XL: ' + xlPct + '%)');
+      if (issues.length === 0) return 'Metrics in or near target range. Keep size limits (&lt; 200 LOC), low TTFR, and peer review.';
+      if (issues.length === 1) return 'Focus: ' + issues[0] + '. Set review SLA and CODEOWNERS to improve.';
+      return 'Priorities: ' + issues.slice(0, 3).join('; ') + '. Review reviewer assignment and PR size.';
     },
     aggregateMetrics() {
       const g = this.realMetrics.loaded && this.realMetrics.global ? this.realMetrics.global : null;
-      const level = this.aggregateLevel;
       return METRIC_DEFS.map((def) => {
         let value;
+        let level = null;
         if (def.id === 'changeFailureRate') {
           value = 'No data (deploy data required)';
         } else if (g) {
-          if (def.id === 'cycleTime' || def.id === 'leadTime') value = formatHours(g.leadTimeMedianH);
-          else if (def.id === 'ttfr') value = formatHours(g.ttfrMedianH);
-          else if (def.id === 'reviewCycles') value = formatReviewCycles(g.reviewCyclesMedian);
-          else value = formatHours(g.leadTimeMedianH);
+          if (def.id === 'cycleTime' || def.id === 'leadTime') {
+            value = formatHours(g.leadTimeMedianH);
+            level = metricLevelForValue(def.id, g.leadTimeMedianH);
+          } else if (def.id === 'ttfr') {
+            value = formatHours(g.ttfrMedianH);
+            level = metricLevelForValue(def.id, g.ttfrMedianH);
+          } else if (def.id === 'reviewCycles') {
+            value = formatReviewCycles(g.reviewCyclesMedian);
+            level = metricLevelForValue(def.id, g.reviewCyclesMedian);
+          } else {
+            value = formatHours(g.leadTimeMedianH);
+            level = metricLevelForValue(def.id, g.leadTimeMedianH);
+          }
         } else {
           value = 'No data';
         }
-        return { ...def, value, level: level || null };
+        return { ...def, value, level };
       });
     },
     aggregatePrSizes() {
@@ -354,6 +422,17 @@ createApp({
       const lead = g.trendLeadTime || [];
       return lead.some((v) => v != null && v > 0);
     },
+    getWeekList() {
+      const from = (this.dateFrom || '').trim();
+      const to = (this.dateTo || '').trim();
+      if (from && to && typeof getWeeksInRange === 'function') {
+        try {
+          const w = getWeeksInRange(from, to);
+          if (w && w.length > 0) return w;
+        } catch (e) {}
+      }
+      return last12Weeks();
+    },
     leadTimeByRepo() {
       const real = this.realMetrics.loaded && this.realMetrics.byRepo;
       return this.repos.map((r) => {
@@ -362,22 +441,46 @@ createApp({
         return { name: r.name, value: val };
       });
     },
+    chartByRepoHeight() {
+      const n = this.leadTimeByRepo.length;
+      if (!n) return { height: '400px', minHeight: '400px' };
+      const px = n > 50 ? 16 : n > 30 ? 20 : 26;
+      const h = n * px;
+      return { height: h + 'px', minHeight: h + 'px' };
+    },
     recomendacionesOrg() {
-      if (this.aggregateLevel == null) return [{ text: 'No data yet.', action: 'Load metrics to see recommendations.', priority: 'low' }];
+      const g = this.realMetrics.loaded && this.realMetrics.global ? this.realMetrics.global : null;
+      if (!g || this.aggregateLevel == null) return [{ text: 'No data yet.', action: 'Load metrics to see recommendations.', priority: 'low' }];
       const recs = [];
-      const level = this.aggregateLevel;
+      const lead = g.leadTimeMedianH;
+      const ttfr = g.ttfrMedianH;
+      const cycles = g.reviewCyclesMedian;
       const xlPct = ((this.aggregatePrPcts && this.aggregatePrPcts[4]) || 0) + ((this.aggregatePrPcts && this.aggregatePrPcts[3]) || 0);
-      if (level === 'low' || (level === 'high' && xlPct > 20)) {
-        recs.push({ text: 'Reduce time to first review (TTFR).', action: 'Set review SLA (e.g. first review in &lt; 48h) and queues per team.', priority: 'high' });
+      if (ttfr != null && ttfr >= 4) {
+        recs.push({ text: 'TTFR above 4h (median ' + formatHours(ttfr) + ').', action: 'Set review SLA (e.g. first review in &lt; 48h) and clear queues per team.', priority: 'high' });
+      } else if (ttfr != null && ttfr >= 1) {
+        recs.push({ text: 'TTFR is ' + formatHours(ttfr) + '; elite target is &lt; 1h.', action: 'Review CODEOWNERS and review queues to reduce wait time.', priority: 'medium' });
+      }
+      if (lead != null && lead >= 24) {
+        recs.push({ text: 'Lead Time above 24h (median ' + formatHours(lead) + ').', action: 'Smaller PRs and faster reviews; aim for &lt; 24h to merge.', priority: 'high' });
+      } else if (lead != null && lead >= 12) {
+        recs.push({ text: 'Lead Time is ' + formatHours(lead) + '; elite target is &lt; 12h.', action: 'Reduce PR size and review cycles to reach elite.', priority: 'medium' });
+      }
+      if (cycles != null && cycles > 1.2) {
+        recs.push({ text: 'Review cycles median is ' + formatReviewCycles(cycles) + ' (target ≤1.2).', action: 'Clear requirements and feedback to reduce back-and-forth.', priority: 'medium' });
       }
       if (xlPct > 25) {
-        recs.push({ text: 'Many large PRs (L/XL+) increase review time and missed issues.', action: 'Soft limit 200 LOC; promote stacked PRs.', priority: 'high' });
+        recs.push({ text: 'Many large PRs: L+XL represent ' + xlPct + '% of PRs.', action: 'Soft limit 200 LOC; promote stacked or smaller PRs.', priority: 'high' });
+      } else if (xlPct > 20) {
+        recs.push({ text: 'PR size: ' + xlPct + '% of PRs are L or XL.', action: 'Encourage PRs &lt; 200 LOC where possible.', priority: 'medium' });
       }
-      if (level !== 'elite') {
-        recs.push({ text: 'Compare to elite benchmarks: Cycle Time &lt; 8h, Lead Time &lt; 12h, TTFR &lt; 1h.', action: 'Review CODEOWNERS assignment and PR size.', priority: 'medium' });
+      if (this.aggregateLevel !== 'elite') {
+        recs.push({ text: 'Elite benchmarks: Lead &lt; 12h, TTFR &lt; 1h, Review cycles ~1.1.', action: 'Use trends and radar to see which metric to improve first.', priority: 'medium' });
       }
-      recs.push({ text: 'DORA target: Change Failure Rate 0–15%, Review Cycles ~1.1.', action: 'Strengthen tests and peer review; smaller PRs reduce rework.', priority: 'medium' });
-      return recs.length ? recs : [{ text: 'Metrics in target range. Keep current practices.', action: 'Keep monitoring trends.', priority: 'low' }];
+      if (recs.length === 0) {
+        return [{ text: 'Metrics in target range. Keep current practices.', action: 'Keep monitoring trends.', priority: 'low' }];
+      }
+      return recs;
     },
   },
   watch: {
@@ -479,7 +582,7 @@ createApp({
       const el = this.$refs.chartTrend;
       if (!el || typeof el.getContext !== 'function') return;
       this.destroyChart('chartTrend');
-      const weeks = last12Weeks();
+      const weeks = (this.realMetrics.weekList && this.realMetrics.weekList.length) ? this.realMetrics.weekList : last12Weeks();
       const labels = weeks.map((w) => w.slice(5));
       const n = labels.length;
       let cycleData, leadData, ttfrData;
@@ -515,7 +618,7 @@ createApp({
       const el = this.$refs.chartThroughput;
       if (!el || typeof el.getContext !== 'function') return;
       this.destroyChart('chartThroughput');
-      const weeks = last12Weeks();
+      const weeks = (this.realMetrics.weekList && this.realMetrics.weekList.length) ? this.realMetrics.weekList : last12Weeks();
       const labels = weeks.map((w) => w.slice(5));
       const n = labels.length;
       let merged;
@@ -543,22 +646,21 @@ createApp({
       this.destroyChart('chartByRepo');
       const data = this.leadTimeByRepo;
       if (!data.length) return;
-      const maxBars = 20;
-      const showData = data.length > maxBars ? data.slice(0, maxBars) : data;
       const colors = ['#3fb950', '#58a6ff', '#d29922', '#a371f7', '#f85149'];
       const getColor = (i) => colors[i % colors.length];
+      const barHeight = data.length > 50 ? 14 : data.length > 30 ? 18 : 24;
       try {
       this.charts.chartByRepo = new Chart(el, {
         type: 'bar',
         data: {
-          labels: showData.map((d) => (d.name && d.name.length > 28 ? d.name.slice(0, 25) + '…' : d.name || '')),
+          labels: data.map((d) => (d.name && d.name.length > 32 ? d.name.slice(0, 29) + '…' : d.name || '')),
           datasets: [{
             label: 'Lead Time (h)',
-            data: showData.map((d) => (typeof d.value === 'number' && Number.isFinite(d.value) && d.value >= 0 ? d.value : 0)),
-            backgroundColor: showData.map((_, i) => getColor(i) + '99'),
-            borderColor: showData.map((_, i) => getColor(i)),
+            data: data.map((d) => (typeof d.value === 'number' && Number.isFinite(d.value) && d.value >= 0 ? d.value : 0)),
+            backgroundColor: data.map((_, i) => getColor(i) + '99'),
+            borderColor: data.map((_, i) => getColor(i)),
             borderWidth: 1,
-            maxBarThickness: 28,
+            maxBarThickness: barHeight,
             barPercentage: 0.85,
             categoryPercentage: 0.75,
           }],
@@ -570,7 +672,7 @@ createApp({
           scales: {
             x: { beginAtZero: true, title: { display: true, text: 'Hours' } },
             y: {
-              ticks: { maxRotation: 0, autoSkip: false, font: { size: 12 }, padding: 6 },
+              ticks: { maxRotation: 0, autoSkip: false, font: { size: data.length > 60 ? 10 : 12 }, padding: 4 },
             },
           },
         },
@@ -597,7 +699,7 @@ createApp({
       const el = this.$refs.chartReviewCycles;
       if (!el || typeof el.getContext !== 'function') return;
       this.destroyChart('chartReviewCycles');
-      const weeks = last12Weeks();
+      const weeks = (this.realMetrics.weekList && this.realMetrics.weekList.length) ? this.realMetrics.weekList : last12Weeks();
       const labels = weeks.map((w) => w.slice(5));
       const g = this.realMetrics.loaded && this.realMetrics.global ? this.realMetrics.global : null;
       const medianVal = g && typeof g.reviewCyclesMedian === 'number' && Number.isFinite(g.reviewCyclesMedian) ? Math.round(g.reviewCyclesMedian * 10) / 10 : 0;
@@ -647,7 +749,7 @@ createApp({
       const el = this.$refs.chartIndividualTrend;
       if (!el || typeof el.getContext !== 'function') return;
       if (typeof document !== 'undefined' && document.body && !document.body.contains(el)) return;
-      const weeks = last12Weeks();
+      const weeks = (this.realMetrics.weekList && this.realMetrics.weekList.length) ? this.realMetrics.weekList : last12Weeks();
       const labels = weeks.map((w) => w.slice(5));
       const n = labels.length;
       const r = this.realMetrics.loaded && this.realMetrics.byRepo[this.selectedRepo];
@@ -720,7 +822,7 @@ createApp({
       const el = this.$refs.chartIndividualThroughput;
       if (!el || typeof el.getContext !== 'function') return;
       if (typeof document !== 'undefined' && document.body && !document.body.contains(el)) return;
-      const weeks = last12Weeks();
+      const weeks = (this.realMetrics.weekList && this.realMetrics.weekList.length) ? this.realMetrics.weekList : last12Weeks();
       const labels = weeks.map((w) => w.slice(5));
       const n = labels.length;
       const r = this.realMetrics.loaded && this.realMetrics.byRepo[this.selectedRepo];
@@ -791,21 +893,37 @@ createApp({
     recomendacionesProyecto(repoName) {
       const r = this.realMetrics.loaded && this.realMetrics.byRepo[repoName];
       if (!r) return [{ text: 'No data for this project.', action: 'Load real metrics to see recommendations.', priority: 'low' }];
-      const level = this.projectLevels[repoName] || 'high';
       const recs = [];
-      if (level === 'low') {
-        recs.push({ text: 'This project has metrics below target.', action: 'Review reviewer assignment (CODEOWNERS) and PR size; target TTFR &lt; 4h.', priority: 'high' });
-      }
+      const lead = r.leadTimeMedianH;
+      const ttfr = r.ttfrMedianH;
+      const cycles = r.reviewCyclesMedian;
+      const openPrs = this.getOpenPrs(repoName);
       const pcts = this.projectPrPcts[repoName] || [];
       const xlPct = (pcts[4] || 0) + (pcts[3] || 0);
+      if (ttfr != null && ttfr >= 4) {
+        recs.push({ text: 'TTFR is ' + formatHours(ttfr) + ' (target &lt; 4h).', action: 'Assign reviewers in CODEOWNERS; set SLA for first review.', priority: 'high' });
+      } else if (ttfr != null && ttfr >= 1) {
+        recs.push({ text: 'TTFR is ' + formatHours(ttfr) + '; elite &lt; 1h.', action: 'Review queues and assignment to reduce wait.', priority: 'medium' });
+      }
+      if (lead != null && lead >= 24) {
+        recs.push({ text: 'Lead Time is ' + formatHours(lead) + ' (target &lt; 24h).', action: 'Smaller PRs and faster reviews for this repo.', priority: 'high' });
+      } else if (lead != null && lead >= 12) {
+        recs.push({ text: 'Lead Time is ' + formatHours(lead) + '; elite &lt; 12h.', action: 'Reduce PR size and review cycles.', priority: 'medium' });
+      }
+      if (cycles != null && cycles > 1.2) {
+        recs.push({ text: 'Review cycles median is ' + formatReviewCycles(cycles) + ' (target ≤1.2).', action: 'Clear feedback and requirements to reduce rework.', priority: 'medium' });
+      }
       if (xlPct > 25) {
-        recs.push({ text: 'High % of large PRs (L/XL+).', action: 'Promote PRs &lt; 200 LOC and stacked PRs for this repo.', priority: 'high' });
+        recs.push({ text: 'L+XL PRs are ' + xlPct + '% of this repo.', action: 'Promote PRs &lt; 200 LOC and stacked changes.', priority: 'high' });
       }
-      if (this.getOpenPrs(repoName) > 10) {
-        recs.push({ text: 'Many open PRs increase review time.', action: 'Limit WIP: close or prioritize; target &lt; 10 open.', priority: 'medium' });
+      if (openPrs > 10) {
+        recs.push({ text: 'Open PRs: ' + openPrs + ' (recommended &lt; 10).', action: 'Close or prioritize; limit WIP to improve review time.', priority: 'medium' });
       }
-      recs.push({ text: 'Compare with radar: bring all dimensions toward elite target.', action: 'Use the radar chart to prioritize which metric to improve first.', priority: 'medium' });
-      return recs.length ? recs : [{ text: 'Project metrics in range.', action: 'Keep monitoring.', priority: 'low' }];
+      if (recs.length === 0) {
+        return [{ text: 'Project metrics in range.', action: 'Keep monitoring.', priority: 'low' }];
+      }
+      recs.push({ text: 'Use the radar chart to see which dimension to improve first.', action: 'Compare with elite target in Quality / Single project.', priority: 'low' });
+      return recs;
     },
     async fetchRealMetrics() {
       const org = (this.orgName || '').trim();
@@ -824,29 +942,6 @@ createApp({
       this.realMetrics.byRepo = {};
       this.realMetrics.global = null;
       this.realMetrics.repoErrors = [];
-      const byRepo = {};
-      const allLeadTimes = [];
-      const allTtfr = [];
-      const allCycles = [];
-      const allSizes = [0, 0, 0, 0, 0];
-      const maxRepos = Math.min(this.repos.length, 100);
-      const emptyRepoData = () => ({
-        leadTimeMedianH: 0,
-        ttfrMedianH: 0,
-        reviewCyclesMedian: 0,
-        prSizePcts: [0, 0, 0, 0, 0],
-        openPrs: 0,
-        prCount: 0,
-        throughputByWeek: last12Weeks().map(() => 0),
-        trendLeadTime: last12Weeks().map(() => null),
-        trendTtfr: last12Weeks().map(() => null),
-        cycleDist: [0, 0, 0, 0],
-        cycleBreakdown: [0, 0, 0],
-        lastActivityAt: null,
-      });
-      this.repos.forEach((r) => {
-        if (r && r.name) byRepo[r.name] = emptyRepoData();
-      });
       const query = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
     name
@@ -862,6 +957,31 @@ createApp({
   }
 }`;
       try {
+        const weekList = this.getWeekList;
+        this.realMetrics.weekList = weekList;
+        const byRepo = {};
+        const allLeadTimes = [];
+        const allTtfr = [];
+        const allCycles = [];
+        const allSizes = [0, 0, 0, 0, 0];
+        const maxRepos = Math.min(this.repos.length, 100);
+        const emptyRepoData = () => ({
+          leadTimeMedianH: 0,
+          ttfrMedianH: 0,
+          reviewCyclesMedian: 0,
+          prSizePcts: [0, 0, 0, 0, 0],
+          openPrs: 0,
+          prCount: 0,
+          throughputByWeek: weekList.map(() => 0),
+          trendLeadTime: weekList.map(() => null),
+          trendTtfr: weekList.map(() => null),
+          cycleDist: [0, 0, 0, 0],
+          cycleBreakdown: [0, 0, 0],
+          lastActivityAt: null,
+        });
+        this.repos.forEach((r) => {
+          if (r && r.name) byRepo[r.name] = emptyRepoData();
+        });
         for (let i = 0; i < maxRepos; i++) {
           const repo = this.repos[i];
           const name = repo.name;
@@ -906,7 +1026,7 @@ createApp({
           const cyclesList = [];
           const sizeCounts = [0, 0, 0, 0, 0];
           const cycleBuckets = [0, 0, 0, 0];
-          const weeks = last12Weeks();
+          const weeks = weekList;
           const weekSet = new Set(weeks);
           const mergedByWeek = {};
           const leadByWeek = {};
@@ -1012,9 +1132,9 @@ createApp({
         }
         const totalSize = allSizes.reduce((a, b) => a + b, 0);
         const globalPrSizePcts = totalSize ? allSizes.map((c) => Math.round((c / totalSize) * 100)) : [0, 0, 0, 0, 0];
-        const globalThroughput = last12Weeks().map(() => 0);
-        const trendLeadByWeek = last12Weeks().map(() => []);
-        const trendTtfrByWeek = last12Weeks().map(() => []);
+        const globalThroughput = weekList.map(() => 0);
+        const trendLeadByWeek = weekList.map(() => []);
+        const trendTtfrByWeek = weekList.map(() => []);
         Object.values(byRepo).forEach((r) => {
           r.throughputByWeek.forEach((v, i) => { globalThroughput[i] += (typeof v === 'number' ? v : 0); });
           (r.trendLeadTime || []).forEach((v, i) => {
@@ -1099,7 +1219,15 @@ createApp({
       try {
         await this.loadRepos();
         if (this.reposError) return;
-        if (this.repos.length && this.githubToken.trim()) await this.fetchRealMetrics();
+        if (this.repos.length && this.githubToken.trim()) {
+          await this.fetchRealMetrics();
+        } else if (this.repos.length && !this.githubToken.trim()) {
+          this.realMetrics.error = 'Token required to load metrics. Enter token and click Load metrics again.';
+        }
+      } catch (e) {
+        var msg = (e && (e.message || e.toString())) || 'Error loading metrics';
+        this.realMetrics.error = msg;
+        if (typeof console !== 'undefined' && console.error) console.error('[Load metrics]', e);
       } finally {
         this.loadingMetrics = false;
       }
@@ -1146,21 +1274,30 @@ createApp({
       }
     },
     projectMetrics(repoName) {
-      const level = this.projectLevels[repoName] || null;
       const r = this.realMetrics.loaded && this.realMetrics.byRepo[repoName];
       return METRIC_DEFS.map((def) => {
         let value;
+        let level = null;
         if (def.id === 'changeFailureRate') {
           value = 'No data (deploy data required)';
         } else if (r) {
-          if (def.id === 'cycleTime' || def.id === 'leadTime') value = formatHours(r.leadTimeMedianH);
-          else if (def.id === 'ttfr') value = formatHours(r.ttfrMedianH);
-          else if (def.id === 'reviewCycles') value = formatReviewCycles(r.reviewCyclesMedian);
-          else value = formatHours(r.leadTimeMedianH);
+          if (def.id === 'cycleTime' || def.id === 'leadTime') {
+            value = formatHours(r.leadTimeMedianH);
+            level = metricLevelForValue(def.id, r.leadTimeMedianH);
+          } else if (def.id === 'ttfr') {
+            value = formatHours(r.ttfrMedianH);
+            level = metricLevelForValue(def.id, r.ttfrMedianH);
+          } else if (def.id === 'reviewCycles') {
+            value = formatReviewCycles(r.reviewCyclesMedian);
+            level = metricLevelForValue(def.id, r.reviewCyclesMedian);
+          } else {
+            value = formatHours(r.leadTimeMedianH);
+            level = metricLevelForValue(def.id, r.leadTimeMedianH);
+          }
         } else {
           value = 'No data';
         }
-        return { ...def, value, level: level || null };
+        return { ...def, value, level };
       });
     },
     projectPrSizes(repoName) {

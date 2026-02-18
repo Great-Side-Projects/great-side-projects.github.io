@@ -21,6 +21,14 @@
           <div class="org-config">
             <input type="text" v-model="orgName" placeholder="Org (e.g. monokera-tech)" class="input-org">
             <input type="password" v-model="githubToken" placeholder="Token (required for metrics)" class="input-token" autocomplete="off">
+            <label class="date-range-label" title="Optional: limit trends to this interval (YYYY-MM-DD). Leave empty for last 12 weeks.">
+              <span class="date-range-text">From</span>
+              <input type="date" v-model="dateFrom" class="input-date">
+            </label>
+            <label class="date-range-label">
+              <span class="date-range-text">To</span>
+              <input type="date" v-model="dateTo" class="input-date">
+            </label>
             <button type="button" @click="loadMetrics" :disabled="loadingMetrics" class="btn btn-primary" title="Loads projects and metrics from GitHub">
               {{ loadingMetrics ? 'Loading…' : 'Load metrics' }}
             </button>
@@ -136,12 +144,13 @@
 
         <template v-if="repos.length">
           <template v-if="vistaProyecto === 'comparativa'">
-            <p class="chart-legend">Median Lead Time (hours) per repository. <strong>Longer bar = more time until merge.</strong> Bar colors alternate by repo for readability.</p>
-            <div class="chart-wrap chart-repos">
-              <canvas id="chartByRepo" ref="chartByRepo"></canvas>
+            <p class="chart-legend">Median Lead Time (hours) per repository. <strong>Longer bar = more time until merge.</strong> All loaded repos shown; scroll if needed.</p>
+            <div class="chart-repos-scroll">
+              <div class="chart-wrap chart-repos" :style="chartByRepoHeight">
+                <canvas id="chartByRepo" ref="chartByRepo"></canvas>
+              </div>
             </div>
-            <p class="chart-caption">Lead Time (h) by repo. First 100 repos loaded; last 100 merged PRs per repo. Repos with no merged PRs or load errors show 0.</p>
-            <p v-if="repos.length > 20" class="chart-caption">Showing the first 20 projects. Use the dropdown and “Single project” to view any repo.</p>
+            <p class="chart-caption">Lead Time (h) by repo ({{ leadTimeByRepo.length }} repos). Last 100 merged PRs per repo. Repos with no merged PRs or load errors show 0.</p>
             <template v-if="selectedRepo">
               <h3 class="metric-cards-title">Key metrics for {{ selectedRepo }}</h3>
               <p class="metric-cards-hint">Cycle Time, Lead Time, TTFR, Review Cycles, and Change Failure Rate for the selected repository.</p>
@@ -359,6 +368,7 @@
     </footer>
   </div>
 
+  <script src="metrics-utils.js"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>
