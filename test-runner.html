@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metrics unit tests</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; background: #1a1a1a; color: #e0e0e0; }
+    h1 { font-size: 1.25rem; }
+    .summary { margin: 1rem 0; padding: 0.75rem; border-radius: 8px; font-weight: 600; }
+    .summary.pass { background: #1a3d1a; color: #86ef86; }
+    .summary.fail { background: #3d1a1a; color: #ef8686; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li { padding: 0.25rem 0; font-size: 0.9rem; }
+    li.pass { color: #86ef86; }
+    li.fail { color: #ef8686; }
+    .section { margin-top: 1rem; font-weight: 600; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>Metrics unit tests</h1>
+  <p>Sin Node: solo JavaScript en el navegador. Abre este archivo o sírvelo con un servidor local.</p>
+  <div id="results"></div>
+
+  <script src="../metrics-utils.js"></script>
+  <script>
+    (function() {
+      var u = window.MetricsUtils;
+      if (!u) {
+        document.getElementById('results').innerHTML = '<p class="summary fail">Error: metrics-utils.js no cargó (window.MetricsUtils no existe).</p>';
+        return;
+      }
+      var getWeekStart = u.getWeekStart;
+      var last12Weeks = u.last12Weeks;
+      var getWeeksInRange = u.getWeeksInRange;
+      var median = u.median;
+      var levelFromMetrics = u.levelFromMetrics;
+      var metricLevelForValue = u.metricLevelForValue;
+      var formatHours = u.formatHours;
+      var formatReviewCycles = u.formatReviewCycles;
+      var sizeBucket = u.sizeBucket;
+
+      var passed = 0, failed = 0;
+      var output = [];
+
+      function ok(cond, msg) {
+        if (cond) { passed++; output.push({ pass: true, msg: msg }); }
+        else { failed++; output.push({ pass: false, msg: msg }); }
+      }
+      function eq(actual, expected, msg) {
+        var same = actual === expected || (Number.isNaN(actual) && Number.isNaN(expected));
+        if (same) { passed++; output.push({ pass: true, msg: msg || 'expected ' + expected + ', got ' + actual }); }
+        else { failed++; output.push({ pass: false, msg: (msg || 'expected ' + expected + ', got ' + actual) }); }
+      }
+
+      // --- getWeekStart ---
+      output.push({ section: 'getWeekStart' });
+      var mon = getWeekStart('2025-02-14');
+      ok(mon === '2025-02-10', 'Friday 2025-02-14 -> Monday 2025-02-10');
+      eq(getWeekStart('2025-02-10'), '2025-02-10', 'Monday stays Monday');
+      eq(getWeekStart('2025-02-11'), '2025-02-10', 'Tuesday -> same week Monday');
+
+      output.push({ section: 'last12Weeks' });
+      var weeks = last12Weeks();
+      ok(Array.isArray(weeks), 'returns array');
+      eq(weeks.length, 12, 'returns 12 weeks');
+      ok(weeks.every(function(w) { return /^\d{4}-\d{2}-\d{2}$/.test(w); }), 'each week is YYYY-MM-DD');
+      var firstMonday = new Date(weeks[0] + 'T12:00:00Z').getUTCDay();
+      eq(firstMonday, 1, 'first week is Monday (1)');
+
+      output.push({ section: 'getWeeksInRange' });
+      var range = getWeeksInRange('2025-01-01', '2025-01-31');
+      ok(Array.isArray(range), 'returns array');
+      ok(range.length >= 4 && range.length <= 5, 'Jan 2025 has 4-5 Mondays');
+
+      output.push({ section: 'median' });
+      eq(median([]), 0, 'empty -> 0');
+      eq(median([5]), 5, 'single -> that value');
+      eq(median([1, 2, 3]), 2, 'odd length');
+      eq(median([1, 2, 3, 4]), 2.5, 'even length (avg of middle two)');
+      eq(median([10, 2, 8]), 8, 'unsorted');
+      eq(median([1, null, 3]), 2, 'ignores null');
+      eq(median([1, NaN, 3]), 2, 'ignores NaN');
+
+      output.push({ section: 'levelFromMetrics' });
+      eq(levelFromMetrics(8, 0.5, 1.1), 'elite', 'lead<12, ttfr<1, cycles<=1.2 -> elite');
+      eq(levelFromMetrics(18, 2, 1.2), 'high', 'lead<24, ttfr<4 -> high');
+      eq(levelFromMetrics(30, 5, 1.5), 'low', 'above high -> low');
+      eq(levelFromMetrics(10, 2, 1.1), 'high', 'lead ok but ttfr not elite -> high');
+
+      output.push({ section: 'metricLevelForValue (per-metric colors)' });
+      eq(metricLevelForValue('leadTime', 10), 'elite', 'lead 10h < 12 -> elite');
+      eq(metricLevelForValue('leadTime', 20), 'high', 'lead 20h < 24 -> high');
+      eq(metricLevelForValue('leadTime', 30), 'low', 'lead 30h -> low');
+      eq(metricLevelForValue('ttfr', 0.5), 'elite', 'ttfr 0.5h < 1 -> elite');
+      eq(metricLevelForValue('ttfr', 2), 'high', 'ttfr 2h < 4 -> high');
+      eq(metricLevelForValue('ttfr', 5), 'low', 'ttfr 5h -> low');
+      eq(metricLevelForValue('reviewCycles', 1.0), 'elite', 'cycles 1.0 <= 1.1 -> elite');
+      eq(metricLevelForValue('reviewCycles', 1.2), 'high', 'cycles 1.2 -> high');
+      eq(metricLevelForValue('reviewCycles', 2), 'low', 'cycles 2 -> low');
+      eq(metricLevelForValue('cycleTime', 6), 'elite', 'cycle 6h < 8 -> elite');
+      eq(metricLevelForValue('changeFailureRate', 10), null, 'CFR has no level');
+      eq(metricLevelForValue('leadTime', null), null, 'null value -> null');
+      eq(metricLevelForValue('leadTime', NaN), null, 'NaN -> null');
+
+      output.push({ section: 'formatHours' });
+      ok(formatHours(0.5).indexOf('min') !== -1, '0.5h -> minutes');
+      ok(formatHours(5).indexOf('h') !== -1, '5h -> hours');
+      ok(formatHours(25).indexOf('d') !== -1, '25h -> days');
+      eq(formatHours(null), '—', 'null -> —');
+      eq(formatHours(NaN), '—', 'NaN -> —');
+
+      output.push({ section: 'formatReviewCycles' });
+      eq(formatReviewCycles(1.15), '1.2', 'rounds to 1 decimal');
+      eq(formatReviewCycles(null), '—', 'null -> —');
+
+      output.push({ section: 'sizeBucket' });
+      eq(sizeBucket(5), 0, 'XS 0-9');
+      eq(sizeBucket(20), 1, 'S 10-29');
+      eq(sizeBucket(50), 2, 'M 30-99');
+      eq(sizeBucket(200), 3, 'L 100-499');
+      eq(sizeBucket(600), 4, 'XL+ 500+');
+
+      // Render
+      var summaryClass = failed > 0 ? 'fail' : 'pass';
+      var summaryText = 'Passed: ' + passed + ', Failed: ' + failed + (failed > 0 ? ' — Hay fallos.' : ' — Todo correcto.');
+      var html = '<div class="summary ' + summaryClass + '">' + summaryText + '</div><ul>';
+      var currentSection = '';
+      for (var i = 0; i < output.length; i++) {
+        var o = output[i];
+        if (o.section) {
+          if (currentSection) html += '</ul><ul>';
+          html += '<li class="section">' + o.section + '</li>';
+          currentSection = o.section;
+        } else {
+          html += '<li class="' + (o.pass ? 'pass' : 'fail') + '">' + (o.pass ? '✓' : '✗') + ' ' + o.msg + '</li>';
+        }
+      }
+      html += '</ul>';
+      document.getElementById('results').innerHTML = html;
+    })();
+  </script>
+</body>
+</html>
