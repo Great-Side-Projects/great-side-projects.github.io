@@ -275,6 +275,7 @@ function fillNullsForward(arr) {
 const chartOptions = {
   responsive: true,
   maintainAspectRatio: true,
+  layout: { padding: { left: 24, right: 24, top: 20, bottom: 20 } },
   plugins: { legend: { position: 'bottom' } },
 };
 
@@ -352,7 +353,8 @@ createApp({
         } else {
           value = 'No data';
         }
-        return { ...def, value, level };
+        const dataNote = def.id === 'cycleTime' && g ? 'Same value as Lead Time (GitHub does not provide commit→deploy).' : null;
+        return { ...def, value, level, dataNote };
       });
     },
     resumenRecomendacion() {
@@ -397,7 +399,8 @@ createApp({
         } else {
           value = 'No data';
         }
-        return { ...def, value, level };
+        const dataNote = def.id === 'cycleTime' && g ? 'Same value as Lead Time (GitHub does not provide commit→deploy).' : null;
+        return { ...def, value, level, dataNote };
       });
     },
     aggregatePrSizes() {
@@ -422,6 +425,14 @@ createApp({
       const lead = g.trendLeadTime || [];
       return lead.some((v) => v != null && v > 0);
     },
+    individualTrendAllZeros() {
+      if (!this.selectedRepo || !this.realMetrics.loaded) return false;
+      const r = this.realMetrics.byRepo[this.selectedRepo];
+      if (!r || !this.projectDataStatus(this.selectedRepo).hasData) return false;
+      const lead = (r.trendLeadTime || []).filter((v) => v != null && v > 0);
+      const ttfr = (r.trendTtfr || []).filter((v) => v != null && v > 0);
+      return lead.length === 0 && ttfr.length === 0;
+    },
     getWeekList() {
       const from = (this.dateFrom || '').trim();
       const to = (this.dateTo || '').trim();
@@ -432,6 +443,16 @@ createApp({
         } catch (e) {}
       }
       return last12Weeks();
+    },
+    weekCount() {
+      const list = this.getWeekList;
+      return (list && list.length) ? list.length : 12;
+    },
+    weekCountLabel() {
+      const n = this.weekCount;
+      const hasRange = !!(this.dateFrom || '').trim() && !!(this.dateTo || '').trim();
+      if (n === 12 && !hasRange) return 'last 12 weeks';
+      return hasRange ? 'selected period (' + n + ' weeks)' : 'last ' + n + ' weeks';
     },
     leadTimeByRepo() {
       const real = this.realMetrics.loaded && this.realMetrics.byRepo;
@@ -591,27 +612,39 @@ createApp({
         const rawLead = (g.trendLeadTime || []).slice(0, n).map((v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null));
         const rawTtfr = (g.trendTtfr || []).slice(0, n).map((v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null));
         const pad = (arr) => (arr.length >= n ? arr : [...arr, ...Array(n - arr.length).fill(null)]);
-        cycleData = fillNullsForward(pad(rawLead));
-        leadData = cycleData.slice();
+        leadData = fillNullsForward(pad(rawLead));
         ttfrData = fillNullsForward(pad(rawTtfr));
+        // With real data we only have Lead Time (PR creation→merge). Cycle Time (commit→deploy) is not available from GitHub, so we show only Lead Time + TTFR to avoid two identical lines.
+        cycleData = null;
       }
-      if (!cycleData || cycleData.length !== n) {
-        cycleData = Array(n).fill(0);
+      if (!leadData || leadData.length !== n) {
+        cycleData = cycleData || Array(n).fill(0);
         leadData = Array(n).fill(0);
         ttfrData = Array(n).fill(0);
       }
-      const maxY = Math.max(10, ...[cycleData, leadData, ttfrData].flat().filter((v) => typeof v === 'number' && v > 0));
-      this.charts.chartTrend = new Chart(el, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [
+      if (cycleData === null) cycleData = leadData.slice();
+      const useRealData = this.realMetrics.loaded && this.realMetrics.global && this.realMetrics.global.trendLeadTime;
+      const datasets = useRealData
+        ? [
+            { label: 'Lead Time (h)', data: leadData, borderColor: '#3fb950', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+            { label: 'TTFR (h)', data: ttfrData, borderColor: '#d29922', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+          ]
+        : [
             { label: 'Cycle Time (h)', data: cycleData, borderColor: '#58a6ff', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
             { label: 'Lead Time (h)', data: leadData, borderColor: '#3fb950', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
             { label: 'TTFR (h)', data: ttfrData, borderColor: '#d29922', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-          ],
+          ];
+      const maxY = Math.max(10, ...[cycleData, leadData, ttfrData].flat().filter((v) => typeof v === 'number' && v > 0));
+      this.charts.chartTrend = new Chart(el, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          ...chartOptions,
+          scales: {
+            x: { ticks: { padding: 14, maxRotation: 45, maxTicksLimit: 20, autoSkip: true } },
+            y: { beginAtZero: true, suggestedMax: maxY, ticks: { padding: 12 } },
+          },
         },
-        options: { ...chartOptions, scales: { y: { beginAtZero: true, suggestedMax: maxY } } },
       });
     },
     drawChartThroughput() {
@@ -636,7 +669,13 @@ createApp({
           labels,
           datasets: [{ label: 'Merged PRs', data: merged, backgroundColor: 'rgba(88, 166, 255, 0.7)', borderColor: '#58a6ff', borderWidth: 1 }],
         },
-        options: { ...chartOptions, scales: { y: { beginAtZero: true, suggestedMax: maxMerged } } },
+        options: {
+          ...chartOptions,
+          scales: {
+            x: { ticks: { padding: 14, maxRotation: 45, maxTicksLimit: 20, autoSkip: true } },
+            y: { beginAtZero: true, suggestedMax: maxMerged, ticks: { padding: 12 } },
+          },
+        },
       });
     },
     drawChartByRepo() {
@@ -710,7 +749,13 @@ createApp({
           labels,
           datasets: [{ label: 'Review cycles (median)', data: dataArr, borderColor: '#a371f7', backgroundColor: 'rgba(163, 113, 247, 0.1)', fill: true, tension: 0.3 }],
         },
-        options: { ...chartOptions, scales: { y: { min: 0.8, max: 2.2 } } },
+        options: {
+          ...chartOptions,
+          scales: {
+            x: { ticks: { padding: 14, maxRotation: 45, maxTicksLimit: 20, autoSkip: true } },
+            y: { min: 0.8, max: 2.2, ticks: { padding: 12 } },
+          },
+        },
       });
     },
     drawChartCycleBreakdownOrg() {
@@ -758,27 +803,38 @@ createApp({
         const rawLead = (r.trendLeadTime || []).slice(0, n).map((v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null));
         const rawTtfr = (r.trendTtfr || []).slice(0, n).map((v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null));
         const pad = (arr) => (arr.length >= n ? arr : [...arr, ...Array(n - arr.length).fill(null)]);
-        cycleData = fillNullsForward(pad(rawLead));
-        leadData = cycleData.slice();
+        leadData = fillNullsForward(pad(rawLead));
         ttfrData = fillNullsForward(pad(rawTtfr));
+        cycleData = null;
       }
-      if (!cycleData || cycleData.length !== n) {
+      if (!leadData || leadData.length !== n) {
         cycleData = Array(n).fill(0);
         leadData = Array(n).fill(0);
         ttfrData = Array(n).fill(0);
       }
+      if (cycleData === null) cycleData = leadData.slice();
+      const useRealData = this.realMetrics.loaded && this.realMetrics.byRepo[this.selectedRepo] && (this.realMetrics.byRepo[this.selectedRepo].trendLeadTime || []).length > 0;
+      const datasets = useRealData
+        ? [
+            { label: 'Lead Time (h)', data: leadData, borderColor: '#3fb950', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+            { label: 'TTFR (h)', data: ttfrData, borderColor: '#d29922', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+          ]
+        : [
+            { label: 'Cycle Time (h)', data: cycleData, borderColor: '#58a6ff', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+            { label: 'Lead Time (h)', data: leadData, borderColor: '#3fb950', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+            { label: 'TTFR (h)', data: ttfrData, borderColor: '#d29922', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
+          ];
       try {
         this.charts.chartIndividualTrend = new Chart(el, {
           type: 'line',
-          data: {
-            labels,
-            datasets: [
-              { label: 'Cycle Time (h)', data: cycleData, borderColor: '#58a6ff', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-              { label: 'Lead Time (h)', data: leadData, borderColor: '#3fb950', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-              { label: 'TTFR (h)', data: ttfrData, borderColor: '#d29922', backgroundColor: 'transparent', tension: 0.3, spanGaps: true },
-            ],
+          data: { labels, datasets },
+          options: {
+            ...chartOptions,
+            scales: {
+              x: { ticks: { padding: 14, maxRotation: 45, maxTicksLimit: 20, autoSkip: true } },
+              y: { beginAtZero: true, ticks: { padding: 12 } },
+            },
           },
-          options: { ...chartOptions, scales: { y: { beginAtZero: true } } },
         });
       } catch (e) { console.warn('chartIndividualTrend', e); }
     },
@@ -1172,13 +1228,14 @@ createApp({
           lastActivityAt: globalLastActivity,
         };
         this.realMetrics.loaded = true;
-        // Validation: warn when a repo has PRs but no data in the last 12 weeks (helps debug chart emptiness)
+        // Validation: warn when a repo has PRs but no data in the selected period (helps debug chart emptiness)
+        const nWeeks = (this.realMetrics.weekList && this.realMetrics.weekList.length) || 12;
         Object.entries(byRepo).forEach(([repoName, r]) => {
           if (r.prCount > 0) {
             const throughputSum = (r.throughputByWeek || []).reduce((a, v) => a + (typeof v === 'number' ? v : 0), 0);
             const hasLead = (r.trendLeadTime || []).some((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0);
             if (throughputSum === 0 && !hasLead && typeof console !== 'undefined' && console.warn) {
-              console.warn(`[GitHub metrics] Repo "${repoName}" has ${r.prCount} merged PRs but none in the last 12 weeks; trend/throughput charts will be empty. Try fetching more PRs or check merge dates.`);
+              console.warn(`[GitHub metrics] Repo "${repoName}" has ${r.prCount} merged PRs but none in the selected period (${nWeeks} weeks); trend/throughput charts will be empty. Try fetching more PRs or check merge dates.`);
             }
           }
         });
@@ -1297,7 +1354,8 @@ createApp({
         } else {
           value = 'No data';
         }
-        return { ...def, value, level };
+        const dataNote = def.id === 'cycleTime' && r ? 'Same value as Lead Time (GitHub does not provide commit→deploy).' : null;
+        return { ...def, value, level, dataNote };
       });
     },
     projectPrSizes(repoName) {
