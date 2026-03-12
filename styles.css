@@ -473,6 +473,49 @@ body {
   margin-bottom: 0.25rem;
 }
 
+/* Contributors module */
+.contributors-disclaimer {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+.contributors-toolbar {
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.contributors-scope-label { font-weight: 500; }
+.contributors-table-wrap {
+  overflow-x: auto;
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+}
+.contributors-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.contributors-table th,
+.contributors-table td {
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.contributors-table th {
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.contributors-table tbody tr:last-child td { border-bottom: 0; }
+.contributors-table tbody tr:hover { background: var(--bg); }
+
 .chart-caption {
   margin: -0.5rem 0 1.5rem;
   font-size: 0.85rem;

@@ -43,6 +43,7 @@
           <p class="token-hint repo-errors-hint">Use a token with <strong>repo</strong> scope (and authorize SSO for your org if required). If the org or repo names are wrong, fix the org field and reload the repo list.</p>
         </template>
         <p v-if="realMetrics.loaded" class="real-metrics-badge">Real metrics loaded from GitHub</p>
+        <p v-if="realMetrics.loaded" class="token-hint data-scope-hint">Only <strong>merged</strong> PRs are included. Open or closed (unmerged) PRs do not appear until they are merged; then click Load metrics again to refresh.</p>
         <p v-if="!realMetrics.loaded && !realMetrics.loading" class="token-hint demo-hint">No data yet. Enter org and token, then click Load metrics to load your data from GitHub.</p>
         <p v-if="tokenHint" class="token-hint">{{ tokenHint }}</p>
       </div>
@@ -58,6 +59,9 @@
         </button></li>
         <li><button type="button" :class="['nav-item', { active: module === 'proyectos' }]" @click="module = 'proyectos'">
           <span class="nav-icon" aria-hidden="true">▦</span> Projects
+        </button></li>
+        <li><button type="button" :class="['nav-item', { active: module === 'contributors' }]" @click="module = 'contributors'">
+          <span class="nav-icon" aria-hidden="true">👤</span> Contributors
         </button></li>
         <li><button type="button" :class="['nav-item', { active: module === 'metricas' }]" @click="module = 'metricas'">
           <span class="nav-icon" aria-hidden="true">▣</span> Detailed metrics
@@ -252,6 +256,54 @@
         <p v-else class="empty-state">Click “Load metrics” to see the comparative view and single-project analysis.</p>
       </section>
 
+      <!-- Contributors (per-person metrics for coaching and flow) -->
+      <section v-show="module === 'contributors'" class="module contributors">
+        <h2 class="module-title">Contributors</h2>
+        <p class="contributors-disclaimer">Per-person metrics are for <strong>coaching, mentoring, and unlocking flow</strong> — not for performance evaluation or ranking. Use them to spot bottlenecks (e.g. one person doing most reviews) and to start supportive conversations.</p>
+        <template v-if="realMetrics.loaded && repos.length">
+          <div class="contributors-toolbar">
+            <label class="contributors-scope-label">Scope:</label>
+            <select v-model="contributorsScope" class="select-project">
+              <option value="org">Organization (all repos)</option>
+              <option v-for="r in repos" :key="r.name" :value="r.name">{{ r.name }}</option>
+            </select>
+          </div>
+          <p class="chart-legend">{{ weekCountLabel }}. Data from merged PRs (up to 100 per repo) and their reviews. Authors = PR creators; reviewers = people who submitted reviews.</p>
+          <div v-if="contributorsList.length" class="contributors-table-wrap">
+            <table class="contributors-table">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Merged PRs</th>
+                  <th>Median Lead Time</th>
+                  <th>Median TTFR</th>
+                  <th>Review cycles</th>
+                  <th>Reviews done</th>
+                  <th>As 1st reviewer</th>
+                  <th>Changes requested</th>
+                  <th>Ratio (auth/rev)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="c in contributorsList" :key="c.login">
+                  <td><strong>{{ c.login }}</strong></td>
+                  <td>{{ c.mergedPrs }}</td>
+                  <td>{{ c.medianLeadTimeH != null ? formatHours(c.medianLeadTimeH) : '—' }}</td>
+                  <td>{{ c.medianTtfrH != null ? formatHours(c.medianTtfrH) : '—' }}</td>
+                  <td>{{ c.medianCycles != null ? formatReviewCycles(c.medianCycles) : '—' }}</td>
+                  <td>{{ c.reviewCount }}</td>
+                  <td>{{ c.asFirstReviewer }}</td>
+                  <td>{{ c.changesRequested }}</td>
+                  <td>{{ c.collaborationRatio }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-else class="empty-state">No contributor data in the selected scope. Load metrics and ensure repos have merged PRs and reviews in the period.</p>
+        </template>
+        <p v-else class="empty-state">Load metrics to see contributors. Data comes from GitHub (PR authors and review authors).</p>
+      </section>
+
       <!-- Detailed metrics -->
       <section v-show="module === 'metricas'" class="module metricas">
         <h2 class="module-title">Aggregate metrics</h2>
@@ -352,7 +404,7 @@
           <div class="info-card">
             <h3>Data extraction (this app)</h3>
             <ul>
-              <li><strong>GraphQL API (v4)</strong>: <code>repository.pullRequests</code> (states: MERGED, first 100, orderBy UPDATED_AT). Fields: createdAt, mergedAt, additions, deletions, <code>reviews.first(25)</code> (submittedAt, state). One request per repo.</li>
+              <li><strong>GraphQL API (v4)</strong>: <code>repository.pullRequests</code> (states: MERGED, first 100, orderBy UPDATED_AT). Fields: createdAt, mergedAt, additions, deletions, <code>author.login</code>, <code>reviews.first(25)</code> (submittedAt, state, <code>author.login</code>). Used for org/repo metrics and for the Contributors module (per-author and per-reviewer stats). One request per repo.</li>
               <li><strong>REST API</strong>: <a href="https://docs.github.com/en/rest" target="_blank" rel="noopener">GitHub REST API</a> — <code>GET /orgs/:org/repos</code> (per_page=100) for the repo list; <code>GET /repos/:owner/:repo/pulls?state=open&per_page=1</code> (Link header) for open PR count; <code>GET /repos/.../commits?per_page=1</code> for last commit.</li>
               <li><strong>Auth</strong>: Personal Access Token with <code>repo</code> scope (and <code>read:org</code> for private orgs). SSO authorization required if the org enforces it.</li>
               <li><strong>Metrics not from GitHub</strong>: <strong>Cycle Time</strong> (first commit→deploy) and <strong>Change Failure Rate</strong> are not provided by GitHub APIs; we show “Data not available” where applicable.</li>

@@ -135,6 +135,8 @@ if (typeof window !== 'undefined' && window.MetricsUtils) {
     return (Math.round(n * 10) / 10).toString();
   };
 }
+const formatHoursGlobal = formatHours;
+const formatReviewCyclesGlobal = formatReviewCycles;
 function formatCycleTime(h) {
   return formatHours(h);
 }
@@ -292,6 +294,7 @@ createApp({
       module: 'resumen',
       vistaProyecto: 'comparativa', // 'comparativa' | 'individual'
       selectedRepo: '',
+      contributorsScope: 'org', // 'org' or repo name for per-repo contributors
       aggregateLevel: null, // only set after real metrics loaded
       projectLevels: {},
       aggregatePrPcts: null, // only set after real metrics loaded
@@ -461,6 +464,52 @@ createApp({
         const val = typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : 0;
         return { name: r.name, value: val };
       });
+    },
+    contributorsList() {
+      if (!this.realMetrics.loaded || !this.realMetrics.byRepo) return [];
+      const scope = this.contributorsScope;
+      const repos = scope === 'org' ? Object.keys(this.realMetrics.byRepo) : (scope ? [scope] : []);
+      const merged = {};
+      for (const repoName of repos) {
+        const repo = this.realMetrics.byRepo[repoName];
+        if (!repo) continue;
+        const byAuthor = repo.byAuthor || {};
+        const byReviewer = repo.byReviewer || {};
+        for (const [login, a] of Object.entries(byAuthor)) {
+          if (!merged[login]) merged[login] = { login, mergedPrs: 0, leadTimes: [], ttfrList: [], cyclesList: [], sizeBuckets: [0, 0, 0, 0, 0], reviewCount: 0, asFirstReviewer: 0, changesRequested: 0 };
+          merged[login].mergedPrs += (a.leadTimes && a.leadTimes.length) || 0;
+          (a.leadTimes || []).forEach((v) => merged[login].leadTimes.push(v));
+          (a.ttfrList || []).forEach((v) => merged[login].ttfrList.push(v));
+          (a.cyclesList || []).forEach((v) => merged[login].cyclesList.push(v));
+          for (let i = 0; i < 5; i++) merged[login].sizeBuckets[i] += (a.sizeBuckets && a.sizeBuckets[i]) || 0;
+        }
+        for (const [login, r] of Object.entries(byReviewer)) {
+          if (!merged[login]) merged[login] = { login, mergedPrs: 0, leadTimes: [], ttfrList: [], cyclesList: [], sizeBuckets: [0, 0, 0, 0, 0], reviewCount: 0, asFirstReviewer: 0, changesRequested: 0 };
+          merged[login].reviewCount += r.reviewCount || 0;
+          merged[login].asFirstReviewer += r.asFirstReviewer || 0;
+          merged[login].changesRequested += r.changesRequested || 0;
+        }
+      }
+      return Object.values(merged)
+        .map((c) => {
+          const totalSize = c.sizeBuckets.reduce((a, b) => a + b, 0);
+          const sizePcts = totalSize ? c.sizeBuckets.map((b) => Math.round((b / totalSize) * 100)) : [0, 0, 0, 0, 0];
+          const collaborationRatio = c.reviewCount > 0 ? (c.mergedPrs / c.reviewCount).toFixed(1) : (c.mergedPrs ? '—' : '—');
+          return {
+            login: c.login,
+            mergedPrs: c.mergedPrs,
+            medianLeadTimeH: c.leadTimes.length ? median(c.leadTimes) : null,
+            medianTtfrH: c.ttfrList.length ? median(c.ttfrList) : null,
+            medianCycles: c.cyclesList.length ? median(c.cyclesList) : null,
+            sizePcts,
+            reviewCount: c.reviewCount,
+            asFirstReviewer: c.asFirstReviewer,
+            changesRequested: c.changesRequested,
+            collaborationRatio,
+          };
+        })
+        .filter((c) => c.mergedPrs > 0 || c.reviewCount > 0)
+        .sort((a, b) => (b.mergedPrs + b.reviewCount) - (a.mergedPrs + a.reviewCount));
     },
     chartByRepoHeight() {
       const n = this.leadTimeByRepo.length;
@@ -1007,7 +1056,8 @@ createApp({
         mergedAt
         additions
         deletions
-        reviews(first: 25) { nodes { submittedAt, state } }
+        author { login }
+        reviews(first: 25) { nodes { submittedAt, state, author { login } } }
       }
     }
   }
@@ -1034,6 +1084,8 @@ createApp({
           cycleDist: [0, 0, 0, 0],
           cycleBreakdown: [0, 0, 0],
           lastActivityAt: null,
+          byAuthor: {},
+          byReviewer: {},
         });
         this.repos.forEach((r) => {
           if (r && r.name) byRepo[r.name] = emptyRepoData();
@@ -1087,6 +1139,8 @@ createApp({
           const mergedByWeek = {};
           const leadByWeek = {};
           const ttfrByWeek = {};
+          const byAuthor = {};
+          const byReviewer = {};
           for (const pr of prs) {
             const created = new Date(pr.createdAt).getTime();
             const merged = pr.mergedAt ? new Date(pr.mergedAt).getTime() : null;
@@ -1098,10 +1152,24 @@ createApp({
             allLeadTimes.push(leadH);
             const reviews = pr.reviews?.nodes || [];
             let firstReviewAt = null;
+            let firstReviewerLogin = null;
             let changesRequested = 0;
-            for (const r of reviews) {
-              if (r.submittedAt && !firstReviewAt) firstReviewAt = new Date(r.submittedAt).getTime();
-              if (r.state === 'CHANGES_REQUESTED') changesRequested++;
+            for (const rev of reviews) {
+              if (rev.submittedAt && !firstReviewAt) {
+                firstReviewAt = new Date(rev.submittedAt).getTime();
+                firstReviewerLogin = rev.author?.login || null;
+              }
+              if (rev.state === 'CHANGES_REQUESTED') changesRequested++;
+              const reviewerLogin = rev.author?.login;
+              if (reviewerLogin) {
+                byReviewer[reviewerLogin] = byReviewer[reviewerLogin] || { reviewCount: 0, asFirstReviewer: 0, changesRequested: 0 };
+                byReviewer[reviewerLogin].reviewCount++;
+                if (rev.state === 'CHANGES_REQUESTED') byReviewer[reviewerLogin].changesRequested++;
+              }
+            }
+            if (firstReviewerLogin) {
+              byReviewer[firstReviewerLogin] = byReviewer[firstReviewerLogin] || { reviewCount: 0, asFirstReviewer: 0, changesRequested: 0 };
+              byReviewer[firstReviewerLogin].asFirstReviewer++;
             }
             // TTFR = first_review_at - created_at (hours)
             let ttfrH = firstReviewAt ? (firstReviewAt - created) / (1000 * 60 * 60) : null;
@@ -1132,6 +1200,14 @@ createApp({
             else if (leadH <= 24) cycleBuckets[1]++;
             else if (leadH <= 48) cycleBuckets[2]++;
             else cycleBuckets[3]++;
+            const authorLogin = pr.author?.login;
+            if (authorLogin) {
+              byAuthor[authorLogin] = byAuthor[authorLogin] || { leadTimes: [], ttfrList: [], cyclesList: [], sizeBuckets: [0, 0, 0, 0, 0] };
+              byAuthor[authorLogin].leadTimes.push(leadH);
+              if (ttfrH != null && !Number.isNaN(ttfrH) && ttfrH >= 0) byAuthor[authorLogin].ttfrList.push(ttfrH);
+              byAuthor[authorLogin].cyclesList.push(cycles);
+              byAuthor[authorLogin].sizeBuckets[bucket]++;
+            }
           }
           const total = sizeCounts.reduce((a, b) => a + b, 0);
           const prSizePcts = total ? sizeCounts.map((c) => Math.round((c / total) * 100)) : [0, 0, 0, 0, 0];
@@ -1179,6 +1255,8 @@ createApp({
             cycleDist,
             cycleBreakdown,
             lastActivityAt,
+            byAuthor,
+            byReviewer,
           };
           } catch (err) {
             byRepo[name] = emptyRepoData();
@@ -1392,6 +1470,12 @@ createApp({
     },
     relativeTimeAgo(iso) {
       return relativeTimeShort(iso);
+    },
+    formatHours(h) {
+      return formatHoursGlobal(h);
+    },
+    formatReviewCycles(n) {
+      return formatReviewCyclesGlobal(n);
     },
     async fetchLastCommit(repoName) {
       const org = (this.orgName || '').trim();
