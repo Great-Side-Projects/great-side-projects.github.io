@@ -267,12 +267,16 @@
               <option value="org">Organization (all repos)</option>
               <option v-for="r in repos" :key="r.name" :value="r.name">{{ r.name }}</option>
             </select>
+            <label class="contributors-filter-label">Filter:</label>
+            <input type="text" v-model.trim="contributorsFilter" placeholder="Search by login…" class="contributors-filter-input" aria-label="Filter contributors by login">
           </div>
           <p class="chart-legend">{{ weekCountLabel }}. Data from merged PRs (up to 100 per repo) and their reviews. Authors = PR creators; reviewers = people who submitted reviews.</p>
           <div v-if="contributorsList.length" class="contributors-table-wrap">
+            <p class="contributors-table-summary">Showing {{ contributorsPaginated.length }} of {{ contributorsFiltered.length }} ({{ contributorsFiltered.length === contributorsList.length ? 'total' : 'matching' }})</p>
             <table class="contributors-table">
               <thead>
                 <tr>
+                  <th class="col-num">#</th>
                   <th>Person</th>
                   <th>Merged PRs</th>
                   <th>Median Lead Time</th>
@@ -285,7 +289,8 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="c in contributorsList" :key="c.login">
+                <tr v-for="c in contributorsPaginated" :key="c.login">
+                  <td class="col-num">{{ c.originalIndex }}</td>
                   <td><strong>{{ c.login }}</strong></td>
                   <td>{{ c.mergedPrs }}</td>
                   <td>{{ c.medianLeadTimeH != null ? formatHours(c.medianLeadTimeH) : '—' }}</td>
@@ -298,6 +303,11 @@
                 </tr>
               </tbody>
             </table>
+            <div v-if="contributorsTotalPages > 1" class="contributors-pagination">
+              <button type="button" class="btn btn-sec" :disabled="contributorsPageClamped <= 1" @click="contributorsPage = contributorsPageClamped - 1" aria-label="Previous page">Previous</button>
+              <span class="contributors-pagination-info">Page {{ contributorsPageClamped }} of {{ contributorsTotalPages }}</span>
+              <button type="button" class="btn btn-sec" :disabled="contributorsPageClamped >= contributorsTotalPages" @click="contributorsPage = contributorsPageClamped + 1" aria-label="Next page">Next</button>
+            </div>
           </div>
           <p v-else class="empty-state">No contributor data in the selected scope. Load metrics and ensure repos have merged PRs and reviews in the period.</p>
         </template>
