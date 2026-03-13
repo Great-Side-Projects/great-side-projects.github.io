@@ -315,6 +315,7 @@ createApp({
       metricDefs: METRIC_DEFS,
       dateFrom: '',
       dateTo: '',
+      prsPerRepoLimit: 1000, // max merged PRs fetched per repo (with pagination)
     };
   },
   computed: {
@@ -1080,10 +1081,12 @@ createApp({
       this.realMetrics.byRepo = {};
       this.realMetrics.global = null;
       this.realMetrics.repoErrors = [];
-      const query = `query($owner: String!, $name: String!) {
+      const prsPerRepoLimit = this.prsPerRepoLimit;
+      const query = `query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     name
-    pullRequests(first: 100, states: [MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
+    pullRequests(first: 100, after: $cursor, states: [MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
+      pageInfo { hasNextPage, endCursor }
       nodes {
         createdAt
         mergedAt
@@ -1126,26 +1129,36 @@ createApp({
         for (let i = 0; i < maxRepos; i++) {
           const repo = this.repos[i];
           const name = repo.name;
-          let repoData = null;
+          let allNodes = [];
           let graphqlError = null;
           try {
-            const res = await fetch('https://api.github.com/graphql', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: 'Bearer ' + token,
-              },
-              body: JSON.stringify({
-                query,
-                variables: { owner: org, name },
-              }),
-            });
-            const json = await res.json();
-            if (json.errors && json.errors.length) {
-              graphqlError = json.errors[0].message || 'GraphQL error';
-            } else {
-              repoData = json.data?.repository;
-            }
+            let cursor = null;
+            do {
+              const res = await fetch('https://api.github.com/graphql', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: 'Bearer ' + token,
+                },
+                body: JSON.stringify({
+                  query,
+                  variables: { owner: org, name, cursor },
+                }),
+              });
+              const json = await res.json();
+              if (json.errors && json.errors.length) {
+                graphqlError = json.errors[0].message || 'GraphQL error';
+                break;
+              }
+              const repoData = json.data?.repository;
+              if (!repoData?.pullRequests?.nodes) break;
+              const nodes = repoData.pullRequests.nodes;
+              allNodes = allNodes.concat(nodes);
+              const pageInfo = repoData.pullRequests.pageInfo || {};
+              if (!pageInfo.hasNextPage || allNodes.length >= prsPerRepoLimit) break;
+              cursor = pageInfo.endCursor;
+              if (cursor && allNodes.length < prsPerRepoLimit) await new Promise((r) => setTimeout(r, 150));
+            } while (cursor);
           } catch (err) {
             graphqlError = err.message || 'Network error';
           }
@@ -1155,12 +1168,7 @@ createApp({
             if (i < maxRepos - 1) await new Promise((r) => setTimeout(r, 200));
             continue;
           }
-          if (!repoData?.pullRequests?.nodes) {
-            byRepo[name] = emptyRepoData();
-            if (i < maxRepos - 1) await new Promise((r) => setTimeout(r, 200));
-            continue;
-          }
-          const prs = repoData.pullRequests.nodes;
+          const prs = allNodes;
           try {
           const leadTimes = [];
           const ttfrList = [];

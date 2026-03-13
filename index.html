@@ -157,7 +157,7 @@
                 <canvas id="chartByRepo" ref="chartByRepo"></canvas>
               </div>
             </div>
-            <p class="chart-caption">Lead Time (h) by repo ({{ leadTimeByRepo.length }} repos). Up to 100 merged PRs per repo; trends use {{ weekCountLabel }}. Repos with no merged PRs or load errors show 0.</p>
+            <p class="chart-caption">Lead Time (h) by repo ({{ leadTimeByRepo.length }} repos). Up to {{ prsPerRepoLimit }} merged PRs per repo; trends use {{ weekCountLabel }}. Repos with no merged PRs or load errors show 0.</p>
             <template v-if="selectedRepo">
               <h3 class="metric-cards-title">Key metrics for {{ selectedRepo }}</h3>
               <p class="metric-cards-hint">Cycle Time, Lead Time, TTFR, Review Cycles, and Change Failure Rate for the selected repository.</p>
@@ -183,7 +183,7 @@
                 <p class="status-msg error">Could not load metrics: {{ projectDataStatus(selectedRepo).errorMessage }}. Check token scope or repo access.</p>
               </template>
               <template v-else-if="!projectDataStatus(selectedRepo).hasData">
-                <p class="status-msg no-data">No merged PRs in the last 100 fetched for this repo. Metrics show —.</p>
+                <p class="status-msg no-data">No merged PRs were returned for this repo (we request up to {{ prsPerRepoLimit }} merged PRs per repo). The repo may have no merges yet, or they are older than what we fetch. Metrics show —.</p>
               </template>
               <template v-else>
                 <p v-if="projectLastActivityText(selectedRepo)" class="status-msg">Last activity (last merged PR): <strong>{{ projectLastActivityText(selectedRepo) }}</strong></p>
@@ -216,7 +216,7 @@
               <div class="chart-wrap chart-half"><canvas id="chartRadar" ref="chartRadar"></canvas></div>
             </div>
             <div v-else-if="realMetrics.loaded && !projectDataStatus(selectedRepo).hasError" class="individual-charts-no-data">
-              <p class="no-data-charts-msg">No data to plot. This project has no merged PRs in the last 100 fetched, so trend, cycle breakdown, throughput, and radar charts are not shown.</p>
+              <p class="no-data-charts-msg">No data to plot. This project has no merged PRs in the data we fetched (up to {{ prsPerRepoLimit }} per repo), so trend, cycle breakdown, throughput, and radar charts are not shown.</p>
             </div>
             <p v-if="realMetrics.loaded && projectDataStatus(selectedRepo).hasData" class="chart-caption">Left: time in queue (pickup), in review, and post-approval. Right: % of PRs by cycle time range. Radar: this project vs elite targets.</p>
             <h3 v-if="realMetrics.loaded && projectDataStatus(selectedRepo).hasData" class="section-subtitle">PR size distribution (this project)</h3>
@@ -239,7 +239,7 @@
               <template v-if="realMetrics.loaded && !projectDataStatus(selectedRepo).hasData && !projectDataStatus(selectedRepo).hasError">
                 <ul class="recommendations-list">
                   <li class="rec-item" data-priority="high">
-                    <span class="rec-text">No merged PRs in the last 100 fetched for this repo.</span>
+                    <span class="rec-text">No merged PRs returned for this repo (up to {{ prsPerRepoLimit }} per repo).</span>
                     <span class="rec-action">Merge or update PRs to see trends and charts here.</span>
                   </li>
                 </ul>
@@ -270,7 +270,7 @@
             <label class="contributors-filter-label">Filter:</label>
             <input type="text" v-model.trim="contributorsFilter" placeholder="Search by login…" class="contributors-filter-input" aria-label="Filter contributors by login">
           </div>
-          <p class="chart-legend">{{ weekCountLabel }}. Data from merged PRs (up to 100 per repo) and their reviews. Authors = PR creators; reviewers = people who submitted reviews.</p>
+          <p class="chart-legend">{{ weekCountLabel }}. Data from merged PRs (up to {{ prsPerRepoLimit }} per repo) and their reviews. Authors = PR creators; reviewers = people who submitted reviews.</p>
           <div v-if="contributorsList.length" class="contributors-table-wrap">
             <p class="contributors-table-summary">Showing {{ contributorsPaginated.length }} of {{ contributorsFiltered.length }} ({{ contributorsFiltered.length === contributorsList.length ? 'total' : 'matching' }})</p>
             <table class="contributors-table">
@@ -414,7 +414,7 @@
           <div class="info-card">
             <h3>Data extraction (this app)</h3>
             <ul>
-              <li><strong>GraphQL API (v4)</strong>: <code>repository.pullRequests</code> (states: MERGED, first 100, orderBy UPDATED_AT). Fields: createdAt, mergedAt, additions, deletions, <code>author.login</code>, <code>reviews.first(25)</code> (submittedAt, state, <code>author.login</code>). Used for org/repo metrics and for the Contributors module (per-author and per-reviewer stats). One request per repo.</li>
+              <li><strong>GraphQL API (v4)</strong>: <code>repository.pullRequests</code> (states: MERGED, paginated up to {{ prsPerRepoLimit }} per repo, orderBy UPDATED_AT). Fields: createdAt, mergedAt, additions, deletions, <code>author.login</code>, <code>reviews.first(25)</code> (submittedAt, state, <code>author.login</code>). Used for org/repo metrics and Contributors. Paginated requests per repo until limit or no more pages.</li>
               <li><strong>REST API</strong>: <a href="https://docs.github.com/en/rest" target="_blank" rel="noopener">GitHub REST API</a> — <code>GET /orgs/:org/repos</code> (per_page=100) for the repo list; <code>GET /repos/:owner/:repo/pulls?state=open&per_page=1</code> (Link header) for open PR count; <code>GET /repos/.../commits?per_page=1</code> for last commit.</li>
               <li><strong>Auth</strong>: Personal Access Token with <code>repo</code> scope (and <code>read:org</code> for private orgs). SSO authorization required if the org enforces it.</li>
               <li><strong>Metrics not from GitHub</strong>: <strong>Cycle Time</strong> (first commit→deploy) and <strong>Change Failure Rate</strong> are not provided by GitHub APIs; we show “Data not available” where applicable.</li>
