@@ -295,6 +295,9 @@ createApp({
       vistaProyecto: 'comparativa', // 'comparativa' | 'individual'
       selectedRepo: '',
       contributorsScope: 'org', // 'org' or repo name for per-repo contributors
+      contributorsFilter: '',
+      contributorsPage: 1,
+      contributorsPageSize: 15,
       aggregateLevel: null, // only set after real metrics loaded
       projectLevels: {},
       aggregatePrPcts: null, // only set after real metrics loaded
@@ -511,6 +514,30 @@ createApp({
         .filter((c) => c.mergedPrs > 0 || c.reviewCount > 0)
         .sort((a, b) => (b.mergedPrs + b.reviewCount) - (a.mergedPrs + a.reviewCount));
     },
+    contributorsFiltered() {
+      const list = this.contributorsList;
+      const q = (this.contributorsFilter || '').trim().toLowerCase();
+      const filtered = !q ? list : list.filter((c) => (c.login || '').toLowerCase().includes(q));
+      return filtered.map((c) => ({ ...c, originalIndex: list.findIndex((x) => x.login === c.login) + 1 }));
+    },
+    contributorsTotalPages() {
+      const n = this.contributorsFiltered.length;
+      const size = Math.max(1, this.contributorsPageSize);
+      return Math.max(1, Math.ceil(n / size));
+    },
+    contributorsPageClamped() {
+      const total = this.contributorsTotalPages;
+      const p = parseInt(this.contributorsPage, 10);
+      if (!Number.isFinite(p) || p < 1) return 1;
+      return p > total ? total : p;
+    },
+    contributorsPaginated() {
+      const list = this.contributorsFiltered;
+      const size = Math.max(1, this.contributorsPageSize);
+      const page = this.contributorsPageClamped;
+      const start = (page - 1) * size;
+      return list.slice(start, start + size);
+    },
     chartByRepoHeight() {
       const n = this.leadTimeByRepo.length;
       if (!n) return { height: '400px', minHeight: '400px' };
@@ -565,6 +592,12 @@ createApp({
       if (n === 'tendencias' || n === 'proyectos' || n === 'calidad') {
         this.$nextTick(() => setTimeout(() => this.initChartsForModule(n), 80));
       }
+    },
+    contributorsFilter() {
+      this.contributorsPage = 1;
+    },
+    contributorsScope() {
+      this.contributorsPage = 1;
     },
     vistaProyecto() {
       if (this.module !== 'proyectos') return;
