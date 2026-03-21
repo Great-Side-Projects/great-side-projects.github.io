@@ -1,0 +1,111 @@
+@startuml provider-service-mer
+!theme plain
+title Provider Service — Modelo entidad-relación (núcleo)
+
+hide circle
+skinparam linetype ortho
+
+entity "products" as prod {
+  * id : uuid <<PK>>
+  --
+  * uid : string
+  * name : string
+  * code : string
+}
+
+entity "plans" as plan {
+  * id : uuid <<PK>>
+  --
+  * product_id : uuid <<FK>>
+  name : string
+  * code : string
+  * core : int
+  * payment_frequency : int
+  * premium : decimal
+}
+
+entity "rules" as rule {
+  * id : uuid <<PK>>
+  --
+  * name : string
+  * description : text
+  * priority : int
+  * process : int
+  * api_type : int
+  * code : string
+  json_schema_payload : jsonb
+  api_settings : jsonb
+  request_parameters : jsonb
+  response_parameters : jsonb
+}
+
+entity "distributor_channels" as dc {
+  * id : uuid <<PK>>
+  --
+  * name : string
+  * code : string
+}
+
+entity "rule_assignments" as ra {
+  * id : uuid <<PK>>
+  --
+  * ruleable_type : string
+  * ruleable_id : uuid
+  * rule_id : uuid <<FK>>
+  distributor_channel_id : uuid <<FK>>
+  custom_settings : jsonb
+}
+
+entity "transactions" as trx {
+  * id : uuid <<PK>>
+  --
+  * type : int
+  * process : int
+  * status : int
+  * protocol_number : string
+  payment_method : int
+  request_payload : jsonb
+  response_payload : jsonb
+  payment_payload_response : jsonb
+}
+
+entity "promotional_codes" as promo {
+  * id : uuid <<PK>>
+  --
+  * uid : string
+  * code : string
+  * plan : string
+  effective_from : date
+  effective_until : date
+  * quantity : int
+  * percentage : decimal
+  * amount : decimal
+  * description : text
+}
+
+entity "transaction_code_sequences" as seq {
+  * id : uuid <<PK>>
+  --
+  number : int
+  * promotional_code : string
+}
+
+prod ||--o{ plan : contiene
+prod ||--o{ ra : "ruleable (Product)"
+plan ||--o{ ra : "ruleable (Plan)"
+rule ||--o{ ra : asigna
+dc ||--o{ ra : opcional
+
+note bottom of ra
+  Polimorfismo: ruleable puede ser
+  Product o Plan. custom_settings
+  sobrescribe fragmentos de Rule.
+end note
+
+note bottom of trx
+  Sin FK a products/plans: el vínculo
+  de negocio va en request_payload
+  (plan_id, product_uid, etc.).
+end note
+
+@enduml

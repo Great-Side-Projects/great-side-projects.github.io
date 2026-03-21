@@ -1,0 +1,38 @@
+@startuml flujo-emision-v2
+!theme plain
+title API v2 — Emisión de póliza (CreateService)
+
+actor "Order Service" as OS
+participant "V2::PoliciesController" as C
+participant "V2::Policies::CreateService" as Svc
+participant "V2::Rules::ConfigurationService" as CFG
+participant "RuleAssignment /\nRule" as R
+participant "RequestBroker\nnamespace v2" as BR
+participant "Providers::V2::\nPacificoSeguros::Client\n(u otro)" as CL
+database "PostgreSQL" as DB
+
+OS -> C : POST /v2/policies/:product_code
+C -> Svc : execute!(transaction, params)
+
+Svc -> CFG : generate! (product, plan,\nprocess, api_type, canal...)
+CFG -> R : resolver regla +\ncustom_settings
+R --> CFG : rule + merge config
+CFG --> Svc : payload configuración\n(method, endpoint, headers, ...)
+
+Svc -> BR : client(payload)
+BR -> CL : new(payload)
+Svc -> CL : generate!
+CL -> CL : token + RequestBuilder
+CL -> CL : HTTP
+CL --> Svc : respuesta normalizada
+
+alt payload válido (ej. status Ok)
+  Svc -> DB : transaction approved +\nmerge response_payload
+else error
+  Svc -> Svc : sin aprobar /\nexcepción según caso
+end
+
+Svc --> C
+C --> OS : JSON
+
+@enduml

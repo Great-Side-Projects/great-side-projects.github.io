@@ -1,0 +1,30 @@
+@startuml flujo-transaccion-v1
+!theme plain
+title API v1 — Transacción y transición (alto nivel)
+
+actor Cliente as C
+participant "API v1\n(Transactions / Status)" as API
+participant "Transaction\n(modelo)" as T
+participant "ProcessManager /\nServicios" as S
+participant "RequestBroker +\nCliente proveedor" as P
+database "PostgreSQL" as DB
+
+C -> API : POST /v1/transactions
+API -> T : crear (pending, payloads)
+T -> DB : persistir
+
+C -> API : POST .../status (transición)
+API -> T : validar transición /\nschemas si aplica
+T -> S : ejecutar según\ntype/process/status
+S -> P : HTTP al asegurador
+P --> S : respuesta
+S -> T : actualizar\nresponse_payload / status
+T -> DB : persistir
+API --> C : JSON
+
+note over S
+  Mapeo vía Brokers::PermittedProcedures
+  (TRANSACTIONS / TRANSITIONS)
+end note
+
+@enduml

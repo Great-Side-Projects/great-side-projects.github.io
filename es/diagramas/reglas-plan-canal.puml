@@ -1,0 +1,25 @@
+@startuml provider-reglas-plan-canal
+!theme plain
+title Provider 2.0 — Relación Producto, Plan, Regla y Canal
+
+left to right direction
+
+rectangle "Product" as P
+rectangle "Plan" as PL
+rectangle "Rule\n(process + api_type +\napi_settings, schemas...)" as R
+rectangle "DistributorChannel" as C
+rectangle "RuleAssignment\n(custom_settings JSONB)" as A
+
+P "1" *-- "n" PL : planes
+P "1" *-- "n" A : puede asignar\nreglas a nivel producto
+PL "1" *-- "n" A : asignación típica\npor plan
+R "1" *-- "n" A
+C "1" *-- "0..n" A : canal opcional\n(especialización)
+
+note bottom of A
+  ConfigurationService busca primero con
+  distributor_channel; si no hay match,
+  fallback sin canal o regla directa (legacy).
+end note
+
+@enduml

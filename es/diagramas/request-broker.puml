@@ -1,0 +1,30 @@
+@startuml request-broker
+!theme plain
+title Resolución de cliente — Providers::RequestBroker
+
+start
+:RequestBroker.new(\nprocess:,\nnamespace: 'v1'|'v2');
+:ALLOWED_PROCESSES[namespace][process];
+
+if (¿Definido?) then (no)
+  :raise NotExistingError;
+  stop
+endif
+
+if (¿Proceso en TENANT_PLAN_PROCESSES\npara ese namespace?) then (sí)
+  :submapa = ALLOWED_PROCESSES[...][process];
+  :tenant = Apartment::Tenant.current.to_sym;
+  :klass = submapa[tenant];
+else (no)
+  :klass = ALLOWED_PROCESSES[namespace][process];
+endif
+
+:klass.new(payload);
+stop
+
+note right
+  Ejemplos multi-tenant v1:
+  car_plan, credit_plan, policy_tenancy
+end note
+
+@enduml
