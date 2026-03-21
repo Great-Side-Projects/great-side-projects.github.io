@@ -1,0 +1,36 @@
+@startuml provider-service-contexto
+!theme plain
+title Provider Service — Contexto (C4 simplificado)
+
+skinparam rectangle {
+  roundCorner 8
+}
+
+actor "Usuario final\n(indirecto)" as User
+rectangle "Order Service /\nMonokera Core" as Core #LightBlue
+rectangle "Billing /\nMensajería" as Bill #LightYellow
+rectangle "Operaciones (SRE)" as Ops #LightGray
+
+rectangle "Provider Service\n(Rails API + Workers)" as PS #Technology {
+  rectangle "API v1 / v2" as API
+  rectangle "Workers\n(Sneakers)" as W
+}
+
+cloud "Aseguradoras y partners\n(Pacífico Seguros/Salud,\nAsissprex, Assurant, …)" as Ins
+database "PostgreSQL" as DB
+
+User ..> Core : compra / póliza
+Core --> API : HTTP JSON
+Bill --> W : colas
+Ops --> API : config / tareas
+API --> DB
+W --> DB
+API --> Ins : HTTPS
+W --> Ins : HTTPS (async)
+
+note right of PS
+  Orquesta integraciones y persiste
+  transacciones, reglas y planes.
+end note
+
+@enduml
