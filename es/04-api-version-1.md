@@ -1,39 +1,65 @@
 # API versión 1
 
-Rutas definidas en `config/routes.rb` bajo `namespace :v1`, formato JSON por defecto.
+Prefijo **`/v1`**, JSON por defecto (`config/routes.rb`). Controladores en `app/controllers/v1/`.
 
-> Enlaces a páginas detalladas: asumen monorepo con `platform-tech-docs` junto a `provider-service`. Ver [README](./README.md) para URLs en GitHub si no aplica.
+## Rutas y controladores
 
-## Resumen de recursos
+| Método | Ruta (relativa al prefijo `/v1`) | Controlador#acción |
+|--------|-----------------------------------|---------------------|
+| GET | `/protected_card_issuances/:holder_code` | *(declarado en rutas; convención `V1::ProtectedCardIssuancesController` — en revisión del árbol actual no hay archivo bajo `app/controllers/v1`; al implementar o al arrancar la app puede exigirse crear el controlador)* |
+| GET | `/promotional_codes/:code` | `V1::PromotionalCodesController#show` (param `code`) |
+| GET | `/promotional_codes` | `index` |
+| POST | `/promotional_codes` | `create` (param interno `uid` en rutas REST) |
+| PATCH/PUT | `/promotional_codes/:uid` | `update` |
+| POST | `/reports` | `V1::ReportsController#create` |
+| GET | `/sales_promoters/:sales_promoter_id` | `V1::SalesPromotersController#show` |
+| GET | `/tenancies` | `V1::PolicyTenanciesController#index` |
+| POST | `/assistances` | `V1::AssistancesController#create` |
+| GET | `/policy_documents` | `V1::PolicyDocumentsController#show` (singular `resource`) |
+| GET | `/insured_cash/plans` | `V1::InsuredCash::PlansController#index` |
+| GET | `/transactions` | `V1::TransactionsController#index` |
+| POST | `/transactions` | `create` |
+| GET | `/transactions/:protocol_number` | `show` |
+| POST | `/transactions/:transaction_protocol_number/status` | `V1::TransactionStateTransitionsController#create` |
 
-| Recurso | Ruta base (relativa) | Ver documentación |
-|---------|----------------------|-------------------|
-| Transacciones | `GET/POST /v1/transactions`, `GET /v1/transactions/:protocol_number` | [transaction.md](../../../platform-tech-docs/services/provider-service/endpoints/v1/transaction.md) |
-| Transición de estado | `POST /v1/transactions/:protocol_number/status` | [transition.md](../../../platform-tech-docs/services/provider-service/endpoints/v1/transition.md) |
-| Tenencia / póliza | `GET /v1/tenancies` | [policy-tenancy.md](../../../platform-tech-docs/services/provider-service/endpoints/v1/policy-tenancy.md) |
-| Documentos de póliza | `GET /v1/policy_documents` | [policy-documents.md](../../../platform-tech-docs/services/provider-service/endpoints/v1/policy-documents.md) |
-| Códigos promocionales | `GET/POST/PATCH /v1/promotional_codes` (uid vs code según acción) | [promotional-code.md](../../../platform-tech-docs/services/provider-service/endpoints/v1/promotional-code.md) |
-| Promotores de venta | `GET /v1/sales_promoters/:sales_promoter_id` | [sales-promoters.md](../../../platform-tech-docs/services/provider-service/endpoints/v1/sales-promoters.md) |
-| Reportes | `POST /v1/reports` | [reports.md](../../../platform-tech-docs/services/provider-service/endpoints/v1/reports.md) |
-| Asistencias | `POST /v1/assistances` | [assistances.md](../../../platform-tech-docs/services/provider-service/api/v1/assistances.md) |
-| Planes Insured Cash | `GET /v1/insured_cash/plans` | [insured-cash-plans.md](../../../platform-tech-docs/services/provider-service/endpoints/v1/insured-cash-plans.md) |
-| Tarjeta protegida (emisión por holder) | `GET /v1/protected_card_issuances/:holder_code` | (ver código / swagger si aplica) |
+> El nombre del parámetro anidado para la transición es **`transaction_protocol_number`** (convención de rutas anidadas de Rails con `param: :protocol_number` en el recurso padre).
 
-## Transacciones: idea clave
+## `TransactionsController#index` — scopes (`has_scope`)
 
-Al crear una transacción se persiste el `request_payload` y metadatos (`type`, `process`, `status` inicial). La **ejecución** contra el proveedor puede ocurrir en el create o en pasos posteriores según el flujo; las **transiciones** disparan lógica en `Brokers::PermittedProcedures::TRANSITIONS` cuando el estado y proceso coinciden.
+Filtros soportados (ver controlador): `created_at` (hash `from`/`to`), `status`, `process`, `payment_method`, `document_number`, `plan`, `partner_key`, `subscription_id`. Paginación vía **Pagy** si viene `page`.
 
-Para payloads y esquemas por proceso, la documentación histórica en [provider-service.md](../../../platform-tech-docs/services/provider-service/provider-service.md) (sección Transactions) sigue siendo útil; **la lista exacta de procesos y tipos** debe contrastarse siempre con `app/models/transaction.rb` y `app/models/brokers/permitted_procedures.rb`.
+## Comportamiento transaccional
 
-## Errores
+- **Crear:** `Transactions::BuilderService` con `operation: :create`.
+- **Transición de estado:** mismo builder con `operation: :status_transition`; parámetros permitidos dependen del `process` (`StateTransitionsPermittedParams`).
+- **Zona horaria:** `before_action :set_lima_default_timezone` en transacciones y transiciones (tenant Pacífico Seguros, salvo Flipper `bypass_lima_default_timezone`).
 
-`ErrorHandler` rescata entre otras `Providers::RequestBroker::NotExistingError` cuando el par `namespace` + `process` no tiene clase registrada en `ALLOWED_PROCESSES` — típico síntoma de proceso mal escrito o integración no registrada para el tenant.
+## Flipper API
 
-## Documentación OpenAPI
+`mount Flipper::Api.app(Flipper) => 'v1'` en `config/routes.rb` — API de feature flags bajo el prefijo configurado; puede convivir con rutas JSON de `namespace :v1`. Confirmar paths con `bin/rails routes` cuando el entorno tenga BD disponible.
 
-Si Rswag está cargado: montaje en `/api/docs` (rutas del propio servicio).
+## Documentación OpenAPI / Swagger
+
+- Montaje: `Rswag::Ui` y `Rswag::Api` en **`/api/docs`** (`config/routes.rb`).
+- Especificación: `swagger/v1/swagger.yaml` y JSON schemas en `swagger/v1/schemas/`.
+
+## Manejo de errores (`ErrorHandler`)
+
+Rescates relevantes para integradores (ver `app/controllers/concerns/error_handler.rb`):
+
+- `RailsAPIUtils::ExceptionError`, `ActiveRecord::RecordInvalid`, `ParameterMissing` → 422.
+- `ActiveRecord::RecordNotFound` → 404 con payload normalizado.
+- `Providers::RequestBroker::NotExistingError`, `Brokers::BaseManager::TransactionUndefinedError`, errores de `Transactions::BuilderService` / `StatusTransitionService` → transacción inválida (422 JSON estructurado).
+- `Providers::ClientBase::ConnectionError` → 401.
+- `Schemas::Errors` (tenancy) → 422 con payload de tenancy.
+- `Monokera::SDK::ResourceNotFound` / `ClientError`.
+- Errores **Pagy** → 422 paginación.
+
+## Pruebas de contrato
+
+`spec/requests/v1/**/*.rb` — fuente de verdad para payloads permitidos además de validadores en `app/validators/`.
 
 ## Siguiente lectura
 
 - [API v2](./05-api-version-2.md)
-- [Integración proveedores](./09-integracion-proveedores.md)
+- [Guía de código](./06-codigo-guia-desarrollador.md)

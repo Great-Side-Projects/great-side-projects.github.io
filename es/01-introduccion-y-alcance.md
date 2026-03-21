@@ -1,42 +1,44 @@
 # Introducción y alcance
 
-## Qué es Provider Service
+## Qué es
 
-Es un **microservicio Rails** que actúa como **capa de integración** entre los productos y flujos de venta de Monokera (Order Service, Core, facturación, mensajería) y las **APIs de aseguradoras y partners** (Pacífico Seguros, Pacífico Salud, Asissprex/Comfamiliar, Assurant, Insurama, Tsana, Yape, etc.).
-
-El servicio:
-
-- Persiste **transacciones** con payloads de solicitud y respuesta para trazabilidad y reportes.
-- Gestiona **configuración dinámica** (Provider 2.0): productos, planes, reglas con esquemas JSON y ajustes de API, asignaciones por canal distribuidor.
-- Expone **API REST JSON** en versiones **v1** y **v2**.
-- Ejecuta **workers** (Sneakers) para cargos recurrentes, confirmaciones y tareas asíncronas ligadas a pólizas y transacciones.
+Microservicio **Rails API** que integra ventas y pólizas de Monokera con APIs de **Pacífico Seguros**, **Pacífico Salud**, **Asissprex (Comfamiliar)**, **Assurant**, **Insurama**, **Tsana**, **Yape**, etc. Persiste **transacciones** (`transactions`), expone **v1** (flujo transaccional clásico) y **v2** (reglas y productos configurables en BD), y consume **RabbitMQ** mediante **Sneakers**.
 
 ## Qué no es
 
-- No sustituye al **Order Service** (orquestación del pedido/venta hacia Monokera).
-- No es el sistema de pagos: recibe/actualiza estado según lo que venga del flujo de pago y mensajes.
-- La documentación de negocio detallada de cada producto asegurador sigue viviendo en contratos y runbooks del partner; aquí se documenta **cómo Monokera los consume** a través de este código.
+- No reemplaza Order Service ni el gateway de pagos; reacciona a mensajes y actualiza estado/payloads.
+- La documentación legal/comercial de cada producto asegurador es externa; aquí solo el **comportamiento del código**.
 
-## Stack técnico (referencia)
+## Stack (fuente: `Gemfile` / `Gemfile.lock`)
 
-Según el README del repositorio de aplicación:
+| Componente | Detalle |
+|------------|---------|
+| Ruby | `3.2.2` |
+| Rails | `8.0.x` (ej. 8.0.2 en lock) |
+| BD | PostgreSQL (`pg`), extensiones vía `monokera:db:extensions` |
+| Multi-tenant | `ros-apartment` (`Apartment::Tenant`) |
+| Mensajería | Gem `rabbitmq` + Sneakers |
+| Feature flags | `flipper-active_record`, API en rutas |
+| HTTP cliente | Faraday (`lib/providers/client_base.rb`) |
+| Validación JSON | `json_schemer` |
+| Paginación | Pagy |
+| Observabilidad | Datadog, Lograge |
+| Privado Monokera | `monokera-sdk`, `rails_api_utils`, etc. (JFrog) |
 
-- Ruby **3.2.x**, Rails **7.x**
-- PostgreSQL
-- **Apartment** (multi-tenant por esquema/base según configuración del proyecto): el `RequestBroker` usa `Apartment::Tenant.current` para algunos procesos multi-inquilino.
-- **Sneakers** + RabbitMQ para workers
-- **Flipper** (montado bajo prefijo v1 en rutas) para feature flags
-- **Rswag** en `/api/docs` para documentación OpenAPI en entornos donde esté habilitada
+> El README raíz del repo puede citar versiones antiguas; la referencia técnica es **Gemfile.lock**.
 
-## Fuentes en el código
+## Puntos de entrada útiles
 
-- Punto de entrada HTTP: `config/routes.rb`
-- Modelo transaccional: `app/models/transaction.rb`
-- Reglas y asignaciones: `app/models/rule.rb`, `app/models/rule_assignment.rb`
-- Resolución de cliente proveedor: `lib/providers/request_broker.rb`, `lib/providers/permitted_processes.rb`
-- Enrutado de procedimientos v1: `app/models/brokers/permitted_procedures.rb`, `app/models/brokers/process_manager.rb`
+| Necesidad | Ubicación |
+|-----------|-----------|
+| Rutas HTTP | `config/routes.rb` |
+| Errores API | `app/controllers/concerns/error_handler.rb` |
+| Máquina de estados transacción | `app/models/transaction.rb` |
+| Qué servicio corre en create/transition v1 | `app/models/brokers/permitted_procedures.rb`, `process_manager.rb`, `transition_manager.rb` |
+| Cliente por proceso | `lib/providers/request_broker.rb`, `permitted_processes.rb` |
+| Esquema BD | `db/schema.rb` |
 
 ## Siguiente lectura
 
-- [Arquitectura y flujos](./02-arquitectura.md)
-- [Guía de código](./06-codigo-guia-desarrollador.md)
+- [Arquitectura](./02-arquitectura.md)
+- [Mapa del repositorio](./11-mapa-repositorio.md)

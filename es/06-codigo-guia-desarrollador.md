@@ -1,78 +1,60 @@
 # Guía de código para desarrolladores
 
-Mapa orientativo del repositorio `provider-service` para localizar cambios con seguridad.
+## Árbol funcional principal
 
-## Estructura de directorios (alto nivel)
+| Ruta en repo | Rol |
+|--------------|-----|
+| `app/controllers/v1`, `v2` | HTTP; incluyen `ErrorHandler` vía `ApplicationController` |
+| `app/services/` | Casi todo el negocio (por tenant/proceso: `pacifico_seguros`, `pacifico_salud`, `v2`, `transactions`, …) |
+| `app/models/` | ActiveRecord + brokers (`process_manager`, `transition_manager`, `permitted_procedures`) |
+| `app/workers/` | Sneakers |
+| `app/serializers/` | AMS + `builders/` para payloads dinámicos |
+| `app/validators/` | JSON Schema y validadores de dominio |
+| `lib/providers/` | Clientes Faraday, autenticación por proceso, namespaces `v2` |
+| `config/routes.rb` | Contrato público |
+| `config/initializers/rabbitmq.rb` | RabbitMQ + Sneakers |
 
-| Ruta | Rol |
-|------|-----|
-| `app/controllers/v1`, `app/controllers/v2` | Entrada HTTP, params, autenticación |
-| `app/services/**` | Lógica de negocio; muchas carpetas por aseguradora o proceso |
-| `app/models` | ActiveRecord; enums y validaciones de transición |
-| `app/models/brokers` | Enrutado de **qué servicio** ejecuta cada transacción/transición v1 |
-| `app/workers` | Consumidores Sneakers; subcarpeta `recurring_charge/` |
-| `app/serializers`, `app/serializers/builders` | JSON y builders dinámicos (`BaseGenerator`, `BaseDeliverer`) |
-| `lib/providers` | Clientes HTTP Faraday, namespaces `V2`, Pga, Tsana, etc. |
-| `config/routes.rb` | Contrato público de la API |
-| `db/schema.rb` | Verdad de tablas y tipos |
+Listado de **carpetas top** en `app/services/`: `asissprex`, `assistances`, `configurable_process`, `mi_banco`, `monokera_core`, `pacifico_salud`, `pacifico_seguros`, `policy_tenancies`, `promotional_codes`, `recurring_charge`, `reports`, `schemas`, `transactions`, `v2`, `yape`, `yape_seguros`, más `concerns/` y servicios sueltos.
 
-## RequestBroker: cómo se elige el cliente
+## `Providers::RequestBroker`
 
-Clase: `Providers::RequestBroker`.
+- Archivo: `lib/providers/request_broker.rb`.
+- `client(payload)` resuelve clase desde `Providers::PermittedProcesses::ALLOWED_PROCESSES[:v1 | :v2][process]`.
+- Procesos multi-tenant (`TENANT_PLAN_PROCESSES`): el valor es un **Hash** por `Apartment::Tenant.current.to_sym`.
+- Si no hay clase: `Providers::RequestBroker::NotExistingError` → manejado en `ErrorHandler`.
 
-1. Se inicializa con `process:` y opcionalmente `namespace:` (`'v1'` por defecto o `'v2'`).
-2. `client(payload)` busca en `Providers::PermittedProcesses::ALLOWED_PROCESSES[namespace][process]`.
-3. Si el proceso está en `TENANT_PLAN_PROCESSES` para ese namespace, el valor es un **Hash por tenant** y se elige con `Apartment::Tenant.current.to_sym`.
-4. Si no hay clase, se lanza `NotExistingError`.
+Diagrama: [`diagramas/request-broker.puml`](./diagramas/request-broker.puml).
 
-Referencia visual: [`diagramas/request-broker.puml`](./diagramas/request-broker.puml).
+## Flujo v1 — creación y proceso
 
-## Flujo v1: creación y transición
+- **`Brokers::ProcessManager`:** usado cuando hay que ejecutar el proveedor según `transaction.type` y `transaction.process`; mapeo en `PermittedProcedures::TRANSACTIONS` (valores pueden ser clase o Hash anidado por `product_uid` / `distributor_channel` — ver código).
+- **`Brokers::TransitionManager`:** transiciones tras cambio de estado; usa `PermittedProcedures::TRANSITIONS[status][process][broker]` (tercer índice es el **broker** en string).
 
-- **`Brokers::ProcessManager`**: a partir de `transaction.type` y `transaction.process`, resuelve la clase en `PermittedProcedures::TRANSACTIONS` o `TRANSITIONS` (según el flujo que invoque el controlador/servicio). Soporta procedimientos anidados por `product_uid` o `distributor_channel` cuando el valor en el hash es un `Hash`.
-- Los servicios concretos suelen usar `Providers::RequestBroker.new(process: ...).client(...)` con payloads específicos del proveedor.
+## Flujo v2
 
-## Flujo v2: reglas y emisión
-
-1. Controlador recibe parámetros (producto, plan, proceso, `api_type`, payload de negocio).
-2. `V2::Rules::ConfigurationService` localiza regla y mezcla `custom_settings` de `RuleAssignment`.
-3. Cliente V2 (`Providers::V2::PacificoSeguros::Client` u otro) usa `Providers::V2::API::RequestBuilder` para construir la petición HTTP y normalizar respuesta/errores.
-
-Archivo ilustrativo: `app/services/v2/policies/create_service.rb`.
+- `V2::Rules::ConfigurationService`, `V2::Policies::CreateService`, `V2::Quotes::CreateService`, `V2::Cancellations::CreateService`.
 
 ## Builders
 
-Documentados en [provider-service.md](../../../platform-tech-docs/services/provider-service/provider-service.md) (sección Builders):
+- `Builders::BaseGenerator.build(process:, **args)` → `app/serializers/builders/<proceso>/...`
+- `Builders::BaseDeliverer.build(type:, schema:, **args)` → serializers por tipo/esquema.
 
-- **`Builders::BaseGenerator.build(process:, **parameters)`** — serializadores bajo `app/serializers/builders/<process>/...`.
-- **`Builders::BaseDeliverer.build(type:, schema:, **parameters)`** — por tipo de transición y esquema.
+Errores si falta clase: `RailsAPIUtils::ExceptionError` (mensajes i18n `generator_not_found` / `serializer_not_found`).
 
-Si falta la clase constantizada, se lanzan errores `RailsAPIUtils::ExceptionError` con claves i18n (`generator_not_found`, `serializer_not_found`).
+## `ApplicationController`
 
-## Validadores de esquema
+- `ActionController::API` + `ErrorHandler` + helpers Pagy.
+- `set_lima_default_timezone`: solo tenant `pacifico_seguros`, header `timezone` o bypass Flipper.
 
-- `app/validators/schemas/request_payload_validator.rb` — payload inicial de transacción.
-- `app/validators/schemas/transition_payload_validator.rb` — transiciones para procesos que lo permiten.
+## Checklist — nuevo proceso de integración
 
-## Feature flags
-
-Flipper API montada en rutas (ver `mount Flipper::Api...` en `config/routes.rb`). Útil para tenencias Mi Banco / Pacífico Salud descritas en la documentación en inglés.
-
-## Tests
-
-- `spec/requests` — contratos HTTP.
-- `spec/services` — unidad de servicios.
-- Al añadir proceso nuevo: actualizar factories/fixtures y permisos en `PermittedProcedures` / `ALLOWED_PROCESSES`.
-
-## Checklist al añadir un proceso nuevo
-
-1. Añadir valor a `Transaction::TRANSACTION_PROCESSES` (y migración si hiciera falta; hoy es enum en modelo).
-2. Registrar cliente(s) en `lib/providers/permitted_processes.rb` para `v1` y/o `v2`.
-3. Implementar servicio(s) y enlazarlos en `Brokers::PermittedProcedures` si aplica flujo v1.
-4. Si es v2: crear/ajustar `Rule` y assignments; validar `V2::RuleConfigurationValidator`.
-5. Documentar endpoint o worker y actualizar diagramas en `docs/es/diagramas/`.
+1. Añadir símbolo a `Transaction::TRANSACTION_PROCESSES` (y usos en reglas si aplica).
+2. Registrar en `lib/providers/permitted_processes.rb` (`VERSION_ONE` / `VERSION_TWO`).
+3. v1: enlazar servicio en `Brokers::PermittedProcedures::TRANSACTIONS` y/o `TRANSITIONS`.
+4. v2: reglas en BD + `RuleAssignment`; validar `V2::RuleConfigurationValidator`.
+5. Añadir worker/ruta/specs y actualizar `docs/es/04`, `07`, `09`.
 
 ## Siguiente lectura
 
 - [Workers](./07-workers-mensajeria.md)
-- [Integración proveedores](./09-integracion-proveedores.md)
+- [Mapa del repositorio](./11-mapa-repositorio.md)

@@ -1,48 +1,101 @@
-# Integración con proveedores (`lib/providers`)
+# Integración con proveedores
 
-## Mapa `ALLOWED_PROCESSES`
+## `ALLOWED_PROCESSES` — `lib/providers/permitted_processes.rb`
 
-Fuente: `lib/providers/permitted_processes.rb`. Resume qué **clase cliente** se usa por **símbolo de proceso** y namespace.
+### `v1` (`VERSION_ONE`)
 
-### Namespace `v1` (`VERSION_ONE`)
+| Clave (símbolo proceso) | Cliente / notas |
+|-------------------------|-----------------|
+| `yape_gateway` | `Providers::YapeSeguros::Client` |
+| `register_reinsurer`, `cancel_register_reinsurer` | `Providers::Assurant::Client` |
+| `pacifico_insurama_reinsurer` | `Providers::Insurama::Client` |
+| `vehicle_soat`, `protected_card`, `mibanco_protected_card`, `life_insurance`, `person_basic_data`, `certificate_link`, `dana_certificate`, `register_data`, `register_credit`, `cancel_credit_policy`, `fraud_consultation`, `fullstack_v3`, `policy_management_life`, … | `Providers::PacificoSeguros::Client` |
+| `insurances`, `policy_management_health` (salud) | `Providers::PacificoSalud::Client` |
+| `car_plan`, `credit_plan`, `policy_tenancy` | Hash por tenant → `TENANT_CLIENTS` (`pacifico_seguros`, `pacifico_salud`, `comfamiliar` → clientes Asissprex/Pacífico según mapa) |
+| `tsana_assistances` | `Providers::Tsana::Client` |
+| `pga` | `Providers::PacificoSeguros::PgaClient` |
 
-Incluye entre otros:
+### `v2` (`VERSION_TWO`)
 
-- **Pacífico Seguros** (`PACIFICO_SEGUROS_CLIENT`): `vehicle_soat`, `protected_card`, `life_insurance`, `person_basic_data`, `certificate_link`, `register_data`, `register_credit`, `cancel_credit_policy`, `fraud_consultation`, `fullstack_v3`, `dana_certificate`, …
-- **Pacífico Salud** (`PACIFICO_SALUD_CLIENT`): `insurances`, `policy_management_health`
-- **Multi-tenant** (`TENANT_CLIENTS`): `car_plan`, `credit_plan`, `policy_tenancy` — submapas `pacifico_seguros`, `pacifico_salud`, `comfamiliar`
-- **Assurant** / **Insurama**: `register_reinsurer`, `cancel_register_reinsurer`, `pacifico_insurama_reinsurer`
-- **Yape**: `yape_gateway`
-- **Tsana**: `tsana_assistances`
-- **PGA**: `pga` (cliente dedicado `PgaClient`)
+| Clave | Cliente |
+|-------|---------|
+| `life_insurance`, `protected_card` | `Providers::V2::PacificoSeguros::Client` |
+| `issuance` | Hash por tenant `TENANT_CLIENTS_V2` (Pacífico Seguros / Salud v2) |
+| `policy_management_health` | `Providers::V2::PacificoSalud::Client` |
 
-Cualquier proceso nuevo debe añadirse aquí o `RequestBroker` fallará con `NotExistingError`.
+Cualquier proceso usado en `RequestBroker` debe existir aquí o se lanza `NotExistingError`.
 
-### Namespace `v2` (`VERSION_TWO`)
+---
 
-- `TENANT_CLIENTS_V2` para `issuance` (Pacífico Seguros / Salud clientes V2).
-- Procesos directos: `life_insurance`, `protected_card`, `policy_management_health` con clientes `Providers::V2::*`.
+## `Brokers::PermittedProcedures::TRANSACTIONS`
 
-## Cliente V2 Pacífico Seguros (patrón)
+Invocados en flujos donde `ProcessManager` resuelve por `type` + `process` (a veces el valor es un **Hash** por canal/tenant → ver `process_manager.rb`).
 
-`Providers::V2::PacificoSeguros::Client`:
+| `type` | `process` | Servicio (o mapa) |
+|--------|-----------|-------------------|
+| `create_quote` | `vehicle_soat` | `PacificoSeguros::VehicleSoat::CreateQuoteService` |
+| `create_quote` | `person_basic_data` | `PacificoSeguros::CreatePersonService` |
+| `create_quote` | `protected_card` | Mapa `pacifico_seguros` / `mi_banco` → CreateQuoteService |
+| `create_quote` | `life_insurance` | Mapa `pacifico_seguros` / `mi_banco` |
+| `create_quote` | `insurances` | Mapa `yape` → `Yape::Insurances::CreateQuoteService` |
+| `create_quote` | `cellphone` | `PacificoSeguros::Cellphone::MonokeraCore::CreateQuoteService` |
+| `create_quote` | `pymes` | `PacificoSeguros::Pymes::CreateQuoteRouterService` |
+| `create_policy` | `certificate_link` | `PacificoSeguros::CreateCertificateLinkService` |
+| `create_policy` | `register_data` | `PacificoSeguros::CreatePolicyRegisterDataService` |
+| `create_policy` | `register_credit` | `PacificoSeguros::CreatePolicyRegisterCreditService` |
+| `create_policy` | `register_reinsurer` | Mapa `default` → Assurant; `per:product:insurama` → Insurama |
+| `create_policy` | `dana_certificate` | `PacificoSeguros::CreateDanaCertificateService` |
+| `cancel_policy` | `cancel_credit_policy` | `PacificoSeguros::CancelCreditPolicyService` |
+| `cancel_policy` | `cancel_register_reinsurer` | `PacificoSeguros::Cellphone::Assurant::CancelPolicyService` |
+| `create_validation` | `fraud_consultation` | `PacificoSeguros::FraudConsultation::CreateValidationService` |
 
-1. Recibe `payload` con configuración ya resuelta (método, endpoint, headers, parámetros).
-2. Obtiene token vía `Authentication::<Processo>.instance` según `payload[:parameters][:process]`.
-3. `Providers::V2::API::RequestBuilder` construye la petición; `execute_http_request` delega en `ClientBase` (GET/POST…).
-4. Normaliza errores y respuesta en el builder.
+**Default por tenant** (cuando aplica): `default_transactions` → `"::#{tenant.camelize}::CreateQuoteService"`.
 
-Este patrón evita hardcodear URLs en cada servicio de negocio: la **Rule** en BD aporta `api_settings`.
+---
 
-## Tenencias configurables
+## `Brokers::PermittedProcedures::TRANSITIONS`
 
-Servicios bajo `app/services/configurable_process/` usan `ConfigurableProcess::Config` y `TenancyService` / `BaseService` con `RequestBroker` para procesos como tenencia de vida o salud (ver documentación en inglés en [provider-service.md](../../../platform-tech-docs/services/provider-service/provider-service.md) sección “New Tenancy Services”).
+Usado por `TransitionManager` como `TRANSITIONS[status][process]` → valor es clase o **Hash por broker** (string).
 
-## Documentación de partner
+### Estado `approved` (emisión / creación tras pago)
 
-Enlaces externos (ej. API A5) aparecen en el README del servicio aplicación; mantenerlos actualizados fuera de este repositorio si el partner cambia URL.
+| `process` | Destino (mapa o clase) |
+|-----------|-------------------------|
+| `car_plan`, `credit_plan` | `comfamiliar` → `Asissprex::CreatePlanService` |
+| `vehicle_soat` | `pacifico_seguros` → VehicleSoat CreatePolicy |
+| `protected_card` | `pacifico_seguros`, `mi_banco` |
+| `life_insurance` | `pacifico_seguros`, `mi_banco` |
+| `cellphone` | `pacifico_seguros` |
+| `insurances` | `pacifico_salud` → CreatePolicy |
+| `pymes` | `pacifico_seguros` → CreatePolicyRouter |
+
+### Estado `rejected`
+
+| `process` | Mapa |
+|-----------|------|
+| `create_plan` | `comfamiliar` → Asissprex CreatePlan |
+
+### Estado `canceled`
+
+| `process` | Mapa |
+|-----------|------|
+| `protected_card` | `pacifico_seguros` → Cancel |
+| `life_insurance` | `pacifico_seguros` |
+| `vehicle_soat` | `pacifico_seguros` |
+| `cellphone` | `pacifico_seguros` |
+| `pymes` | `pacifico_seguros` |
+
+---
+
+## Cliente V2 Pacífico Seguros
+
+`lib/providers/v2/pacifico_seguros/client.rb`: token por proceso (`Authentication::*`), `RequestBuilder`, `execute_http_request` sobre `ClientBase`.
+
+## Proceso configurable (tenencias)
+
+`app/services/configurable_process/*` + `RequestBroker` con configuración por `ConfigurableProcess::Config`.
 
 ## Siguiente lectura
 
-- [Arquitectura](./02-arquitectura.md)
 - [Guía de código](./06-codigo-guia-desarrollador.md)
+- [Modelo de datos](./03-modelo-datos-y-dominio.md)

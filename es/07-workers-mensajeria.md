@@ -1,41 +1,49 @@
 # Workers y mensajería
 
-## Infraestructura
+## Configuración
 
-- Configuración central: `config/initializers/rabbitmq.rb` (lee `config/rabbitmq.yml` y `config/sneakers.yml`).
-- Workers: gem **Sneakers**; clases en `app/workers/**/*.rb`.
+- `config/initializers/rabbitmq.rb` — AMQP, exchange, opciones Sneakers.
+- `config/rabbitmq.yml`, `config/sneakers.yml`.
 
-> Tabla de enlaces: rutas relativas a **platform-tech-docs** en monorepo; ver [README](./README.md) para GitHub.
+Workers usan `Rabbitmq::TaggedWorkerTracer` u otros concerns (`ErrorWorkable`, `ChargeRequestWorkable`, `CellphoneWorkable`, …) según el archivo.
 
-## Lista de workers (código actual)
+## Inventario (cola → routing keys → clase)
 
-Colocados en `app/workers/` (revisar `grep class.*Worker` o listado de archivos para el inventario al día):
+Datos extraídos de `app/workers/**/*.rb`. Los `routing_key` pueden ser patrones con `*`.
 
-| Área | Archivo (ejemplo) | Documentación (platform-tech-docs) |
-|------|-------------------|-------------------------------------|
-| Cargos recurrentes | `recurring_charge/create_recurring_charge_worker.rb` | [create-recurring-charge.md](../../../platform-tech-docs/services/provider-service/workers/recurring-charge/create-recurring-charge.md) |
-| | `recurring_charge/create_policy_charge_request_worker.rb` | [create-policy-charge-request.md](../../../platform-tech-docs/services/provider-service/workers/recurring-charge/create-policy-charge-request.md) |
-| | `recurring_charge/transaction_payment_confirmation_worker.rb` | [transaction-payment-confirmation.md](../../../platform-tech-docs/services/provider-service/workers/recurring-charge/transaction-payment-confirmation.md) |
-| | `recurring_charge/transaction_issuance_confirmation_worker.rb` | [transaction-issuance-confirmation.md](../../../platform-tech-docs/services/provider-service/workers/recurring-charge/transaction-issuance-confirmation.md) |
-| | `recurring_charge/confirm_transaction_subscription_worker.rb` | [confirm-transaction-subscription.md](../../../platform-tech-docs/services/provider-service/workers/recurring-charge/confirm-transaction-subscription.md) |
-| | `recurring_charge/cancel_transaction_subscription_worker.rb` | [cancel-transaction-subscription.md](../../../platform-tech-docs/services/provider-service/workers/recurring-charge/cancel-transaction-subscription.md) |
-| | `recurring_charge/confirm_policy_issuance_worker.rb` | [confirm-policy-issuance.md](../../../platform-tech-docs/services/provider-service/workers/recurring-charge/confirm-policy-issuance.md) |
-| | `recurring_charge/cancel_policy_subscription_worker.rb` | [cancel-policy-subscription.md](../../../platform-tech-docs/services/provider-service/workers/recurring-charge/cancel-policy-subscription.md) |
-| Estado transacción | `confirm_transaction_status_worker.rb` | [confirm-transaction-status.md](../../../platform-tech-docs/services/provider-service/workers/confirm-transaction-status.md) |
-| Reportes | `send_report_transaction_worker.rb` | [send-transaction-report.md](../../../platform-tech-docs/services/provider-service/workers/send-transaction-report.md) |
-| Póliza / Pacifico | `create_policy_register_data_worker.rb`, `create_policy_register_credit_worker.rb`, `create_policy_certificate_link_worker.rb`, `create_dana_certificate_worker.rb`, `create_policy_reinsurer_data_worker.rb`, `cancel_policy_register_credit_worker.rb`, `cancel_policy_reinsurer_data_worker.rb`, `search_external_policy_number_worker.rb` | (documentar en workers si falta página; ver nombre de cola en cada worker) |
+| Cola | Routing keys (principales) | Clase |
+|------|----------------------------|--------|
+| `provider-service.confirm-transaction-status` | `messaging-gateway-service.epayco.payment_confirmation.received` | `ConfirmTransactionStatusWorker` |
+| `provider-service.create-dana-certificate` | `notifier-service.policy.notify-settings.loaded` | `CreateDanaCertificateWorker` |
+| `provider-service.create-policy-reinsurer-data` | `core-integration-service.policy.extended_resources.created` | `CreatePolicyReinsurerDataWorker` |
+| `provider-service.create-policy-certificate` | `core-integration-service.policy.extended_resources.created` | `CreatePolicyCertificateLinkWorker` |
+| `provider-service.create-policy-register-data` | `core-integration-service.policy.extended_resources.created` | `CreatePolicyRegisterDataWorker` |
+| `provider-service.create-policy-register-collection-credit` | `core-integration-service.policy.extended_resources.renewed` | `CreatePolicyRegisterCreditWorker` |
+| `provider-service.external-policy-number.search` | `core-integration-service.extended_resource.external_policy.update_request` | `SearchExternalPolicyNumberWorker` |
+| `provider-service.report.transaction-document-send` | `scheduler-service.transaction-report-send.due-date.arrived` | `SendReportTransactionWorker` |
+| `provider-service.cancel-policy-register` | `billing-service.*.billing.policy-plan-canceled`, `core-integration-service.policy.extended_resource.canceled` | `CancelPolicyRegisterCreditWorker` |
+| `provider-service.cancel-policy-reinsurer-data` | `billing-service.*.billing.policy-plan-canceled`, `policy-service.*.policy.expired` | `CancelPolicyReinsurerDataWorker` |
+| `provider-service.create-recurring-charge` | `data-egress-pipeline.product.recurring-charge-arrived` | `RecurringCharge::CreateRecurringChargeWorker` |
+| `provider-service.recurring-charge.create-policy-request` | `billing-service.*.recurring-charge.installment_overdue`, `billing-service.*.recurring-charge.pending-installment` | `RecurringCharge::CreatePolicyChargeRequestWorker` |
+| `provider-service.transaction.payment-confirmation` | `messaging-gateway-service.recurring_charge.confirmation` | `RecurringCharge::TransactionPaymentConfirmationWorker` |
+| `provider-service.transaction.issuance-confirmation` | `core-integration-service.extended_resource.request.created` | `RecurringCharge::TransactionIssuanceConfirmationWorker` |
+| `provider-service.transaction.confirm-subscription` | `messaging-gateway-service.subscription.confirmed`, `data-egress-pipeline.pending-subscription.confirmed` | `RecurringCharge::ConfirmTransactionSubscriptionWorker` |
+| `provider-service.cancel-transaction-subscription` | `messaging-gateway-service.policy.cancelled` | `RecurringCharge::CancelTransactionSubscriptionWorker` |
+| `provider-service.policy-issuance-confirmation` | `messaging-gateway-service.policy.confirmed` | `RecurringCharge::ConfirmPolicyIssuanceWorker` |
+| `provider-service.cancel-policy-subscription` | `policy-service.*.policy.cancelled` | `RecurringCharge::CancelPolicySubscriptionWorker` |
 
-Muchos workers incluyen concerns en `app/workers/concerns/` (`error_workable`, `partner_workable`, `ratelimit_workable`, etc.) para comportamiento transversal.
+Opciones comunes en `from_queue`: dead-letter `*-retry`, `timeout_job_after: 1.minute`, `retry_max_times: 4`, `retry_timeout: 15.minutes` (ver cada archivo para valores exactos).
 
-## Relación con la documentación en inglés
+## Depuración
 
-La tabla “Available Workers” de [provider-service.md](../../../platform-tech-docs/services/provider-service/provider-service.md) enlaza a los mismos Markdown de `workers/`; esta guía en español **no duplica** el contenido de cada cola — remite a esos archivos para payloads, exchanges y efectos secundarios.
+- `bundle exec rake sneakers:run_debug` con `WORKERS=NombreWorker` (`lib/tasks/sneakers_debug.rake`).
+- Tareas `reinsurer_worker:*` en `lib/tasks/send_reinsurer_worker_message.rake` (estado cola, envío de prueba, invocación directa).
+- Doc adicional en repo: [`docs/flujo-reasegurador-y-api-pacifico.md`](../flujo-reasegurador-y-api-pacifico.md).
 
-## Depuración local
+## Pruebas
 
-- Scripts en `script/` (p. ej. ejecución puntual de workers o reinsurer).
-- En este repo: [`../flujo-reasegurador-y-api-pacifico.md`](../flujo-reasegurador-y-api-pacifico.md) y otros `.puml` bajo `docs/` si necesitáis flujo Assurant/Insurama.
+`spec/workers/**/*.rb`
 
 ## Siguiente lectura
 
-- [Tareas operación](./08-tareas-operacion.md)
+- [Tareas Rake](./08-tareas-operacion.md)

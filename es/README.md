@@ -1,51 +1,37 @@
 # Provider Service — Documentación para desarrolladores (ES)
 
-Documentación consolidada del **Provider Service** (Rails): propósito del microservicio, arquitectura, modelo de datos, APIs v1/v2, organización del código, workers y tareas operativas. Vive en **este repositorio** (`provider-service/docs/es/`). Los detalles de endpoints, workers y tasks siguen en el repo **[platform-tech-docs](https://github.com/monokera-tech/platform-tech-docs)** (en un monorepo local suele ser la carpeta hermana `platform-tech-docs`).
+Toda la guía vive en **este repositorio** (`provider-service/docs/es/`): arquitectura, rutas HTTP, workers RabbitMQ, tareas Rake, modelos, integración con aseguradoras y diagramas PlantUML. Está alineada con el código actual; no depende de otros repos de documentación.
 
 ## Audiencia y objetivo
 
-- **Quién:** desarrolladores que deben entender, extender o depurar integraciones con aseguradoras y canales.
-- **Qué obtienes:** mapa mental del sistema, dónde tocar código, cómo fluyen las peticiones y qué tablas/configuración las sostienen.
+- **Quién:** desarrolladores que extienden o depuran integraciones con aseguradoras y canales.
+- **Qué obtienes:** mapa del código, contratos HTTP reales (`config/routes.rb`), colas y routing keys, y dónde registrar nuevos procesos.
 
 ## Índice de guías
 
 | Documento | Contenido |
 |-----------|-----------|
-| [Introducción y alcance](./01-introduccion-y-alcance.md) | Qué es el servicio, qué no es, stack, multi-tenant (Apartment), dependencias externas. |
-| [Arquitectura y flujos](./02-arquitectura.md) | Vista en capas, v1 vs v2, diagramas (referencias PlantUML). |
-| [Modelo de datos y dominio](./03-modelo-datos-y-dominio.md) | Entidades principales, enums de `Transaction` y `Rule`, relaciones. |
-| [API versión 1](./04-api-version-1.md) | Rutas v1, transacciones, transiciones, recursos auxiliares; enlaces a specs de endpoints. |
-| [API versión 2](./05-api-version-2.md) | Productos integración, reglas, cotizaciones, pólizas, cancelaciones; flujo con Order Service. |
-| [Guía de código para desarrolladores](./06-codigo-guia-desarrollador.md) | Carpetas clave, `RequestBroker`, `ProcessManager`, builders, servicios V2. |
-| [Workers y mensajería](./07-workers-mensajeria.md) | Sneakers/RabbitMQ, workers recurrentes y de póliza. |
-| [Tareas Rake y operación](./08-tareas-operacion.md) | Tareas documentadas y buenas prácticas (SRE/QA). |
-| [Integración con proveedores](./09-integracion-proveedores.md) | Clientes en `lib/providers`, procesos permitidos v1/v2. |
-| [Glosario](./10-glosario.md) | Términos recurrentes (transacción, regla, broker, etc.). |
+| [01 — Introducción y alcance](./01-introduccion-y-alcance.md) | Rol del servicio, stack (Gemfile.lock), Apartment, gems clave. |
+| [02 — Arquitectura y flujos](./02-arquitectura.md) | Capas, v1 vs v2, Mermaid, enlaces a diagramas `.puml`. |
+| [03 — Modelo de datos](./03-modelo-datos-y-dominio.md) | Tablas y modelos ActiveRecord, enums, `plan_rules` → `rule_assignments`. |
+| [04 — API v1](./04-api-version-1.md) | Rutas, controladores, scopes, OpenAPI/Swagger, errores. |
+| [05 — API v2](./05-api-version-2.md) | Integration products, rules, quotes, policies, cancellations. |
+| [06 — Guía de código](./06-codigo-guia-desarrollador.md) | RequestBroker, ProcessManager, TransitionManager, ErrorHandler, builders. |
+| [07 — Workers y mensajería](./07-workers-mensajeria.md) | Cola, routing keys y clase por worker (extraído del código). |
+| [08 — Tareas Rake](./08-tareas-operacion.md) | Todas las tareas en `lib/tasks/`. |
+| [09 — Integración proveedores](./09-integracion-proveedores.md) | `ALLOWED_PROCESSES` y `PermittedProcedures` (TRANSACTIONS / TRANSITIONS). |
+| [10 — Glosario](./10-glosario.md) | Términos. |
+| [11 — Mapa del repositorio](./11-mapa-repositorio.md) | Inventario de carpetas (`app/`, `lib/providers/`, `spec/`). |
 
 ## Diagramas PlantUML
 
-Los fuentes viven en [`diagramas/`](./diagramas/). Puedes renderizarlos con [PlantUML](https://plantuml.com/) (CLI, plugin de IDE o servidor).
+Directorio [`diagramas/`](./diagramas/). Render con [PlantUML](https://plantuml.com/).
 
-| Archivo | Uso |
-|---------|-----|
-| [`diagramas/contexto-c4.puml`](./diagramas/contexto-c4.puml) | Contexto: actores y sistemas vecinos. |
-| [`diagramas/mer-entidades.puml`](./diagramas/mer-entidades.puml) | Modelo entidad-relación (tablas nucleares). |
-| [`diagramas/reglas-plan-canal.puml`](./diagramas/reglas-plan-canal.puml) | Producto, plan, regla, canal y `RuleAssignment`. |
-| [`diagramas/request-broker.puml`](./diagramas/request-broker.puml) | Resolución de cliente HTTP por proceso y namespace. |
-| [`diagramas/flujo-transaccion-v1.puml`](./diagramas/flujo-transaccion-v1.puml) | Flujo alto nivel transacción v1 + transición. |
-| [`diagramas/flujo-emision-v2.puml`](./diagramas/flujo-emision-v2.puml) | Emisión v2 con `ConfigurationService` y cliente V2. |
+## Contratos y pruebas
 
-## Documentación en platform-tech-docs (referencia cruzada)
+- **OpenAPI (Rswag):** `swagger/v1/swagger.yaml` y esquemas en `swagger/v1/schemas/`; UI montada en `/api/docs` (ver `config/routes.rb`).
+- **Especificación por comportamiento:** `spec/requests`, `spec/services`, `spec/workers`.
 
-En un monorepo con `provider-service` y `platform-tech-docs` al mismo nivel, las rutas relativas usadas en las guías apuntan a `../../../platform-tech-docs/services/provider-service/`. Si solo clonaste `provider-service`, usa el repo en GitHub:
+## Mantenimiento
 
-- Visión general: [provider-service.md](https://github.com/monokera-tech/platform-tech-docs/blob/master/services/provider-service/provider-service.md)
-- Provider 2.0: [business_documentation.md](https://github.com/monokera-tech/platform-tech-docs/blob/master/services/provider-service/v2/business_documentation.md)
-- [Endpoints](https://github.com/monokera-tech/platform-tech-docs/tree/master/services/provider-service/endpoints)
-- [Workers](https://github.com/monokera-tech/platform-tech-docs/tree/master/services/provider-service/workers)
-- [Tasks](https://github.com/monokera-tech/platform-tech-docs/tree/master/services/provider-service/tasks)
-- [Contratos JSON v2](https://github.com/monokera-tech/platform-tech-docs/tree/master/services/provider-service/api/v2/payloads)
-
-## Mantenimiento de esta documentación
-
-Al añadir un **nuevo proceso** en `Transaction::TRANSACTION_PROCESSES`, una entrada en `Providers::PermittedProcesses::ALLOWED_PROCESSES`, o una **nueva ruta** en `config/routes.rb`, actualizar al menos: [03-modelo-datos-y-dominio.md](./03-modelo-datos-y-dominio.md), [06-codigo-guia-desarrollador.md](./06-codigo-guia-desarrollador.md), [09-integracion-proveedores.md](./09-integracion-proveedores.md) y el diagrama afectado en `diagramas/`.
+Al cambiar rutas, workers, enums de `Transaction`/`Rule` o `ALLOWED_PROCESSES`, actualizar las secciones correspondientes en `04`, `07`, `03`, `09` y diagramas si aplica.
